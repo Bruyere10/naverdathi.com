@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="description" content="Painel pessoal para acompanhar receitas, despesas e metas financeiras.">
+	<title>NAVERDATHI | Controle financeiro</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<section class="auth-screen" id="auth-screen" aria-labelledby="auth-title">
+		<div class="auth-intro">
+			<a class="brand" href="#" aria-label="NAVERDATHI">
+				<span class="brand-mark brand-logo"><img src="Logo%20site%20Naverdathi.png.jpeg" alt="Logo NAVERDATHI"></span>
+				<span>NAVERDATHI</span>
+			</a>
+			<div class="auth-message"><p class="eyebrow">CONTROLE FINANCEIRO PESSOAL</p><h1>Seu dinheiro, em bom fluxo.</h1><p>Organize receitas, despesas e planos em um s&oacute; lugar.</p></div>
+			<div class="auth-pattern" aria-hidden="true"></div>
+		</div>
+		<div class="auth-form-area">
+			<form class="auth-form" id="auth-form">
+				<p class="section-kicker" id="auth-kicker">BEM-VINDO DE VOLTA</p>
+				<h2 id="auth-title">Entre na sua conta</h2>
+				<p class="auth-subtitle" id="auth-subtitle">Acompanhe sua vida financeira.</p>
+				<label id="name-field" hidden>Nome<input id="auth-name" type="text" autocomplete="name" placeholder="Como podemos chamar voc&ecirc;?"></label>
+				<label>E-mail<input id="auth-email" type="email" autocomplete="email" required placeholder="voce@exemplo.com"></label>
+				<label>Senha<input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="M&iacute;nimo de 6 caracteres"></label>
+				<button class="forgot-password-button" id="forgot-password-button" type="button">Esqueci minha senha</button>
+				<p class="auth-error" id="auth-error" role="alert"></p>
+				<button class="submit-button" id="auth-submit" type="submit">Entrar</button>
+				<div class="auth-divider"><span>ou</span></div>
+				<button class="google-button" id="google-login-button" type="button"><span aria-hidden="true">G</span>Continuar com Google</button>
+				<p class="auth-switch" id="auth-switch">Ainda n&atilde;o possui uma conta? <button type="button" id="auth-mode-toggle">Criar conta</button></p>
+			</form>
+		</div>
+	</section>
+	<dialog class="transaction-modal" id="password-reset-modal">
+		<form id="password-reset-form">
+			<div class="modal-header"><div><p class="section-kicker">RECUPERA&Ccedil;&Atilde;O DE ACESSO</p><h2>Crie uma nova senha</h2></div></div>
+			<p class="modal-description" id="password-reset-description">Confirme a nova senha para concluir o acesso.</p>
+			<label>Nova senha<input required id="new-password-input" type="password" autocomplete="new-password" minlength="6" placeholder="M&iacute;nimo de 6 caracteres"></label>
+			<label>Confirmar nova senha<input required id="confirm-password-input" type="password" autocomplete="new-password" minlength="6" placeholder="Repita a nova senha"></label>
+			<p class="auth-error" id="password-reset-error" role="alert"></p>
+			<button class="submit-button" id="password-reset-submit" type="submit">Salvar nova senha</button>
+		</form>
+	</dialog>
+
+	<div class="app-shell" id="app-shell" hidden>
+		<aside class="sidebar">
+			<a class="brand" href="#inicio" aria-label="NAVERDATHI, página inicial">
+				<span class="brand-mark brand-logo"><img src="Logo%20site%20Naverdathi.png.jpeg" alt="Logo NAVERDATHI"></span>
+				<span>NAVERDATHI</span>
+			</a>
+
+			<nav class="main-nav" aria-label="Navegação principal">
+				<a class="nav-item active" href="#inicio" data-view="Visão geral">
+					<span class="nav-icon">⌂</span>Visão geral
+				</a>
+				<a class="nav-item" href="#lancamentos" data-view="Lançamentos">
+					<span class="nav-icon">↕</span>Lançamentos
+				</a>
+				<a class="nav-item" href="#orcamento" data-view="Orçamento">
+					<span class="nav-icon">◔</span>Orçamento
+				</a>
+				<a class="nav-item" href="#investimentos" data-view="Investimentos">
+					<span class="nav-icon">↗</span>Investimentos
+				</a>
+				<a class="nav-item" href="#metas" data-view="Metas">
+					<span class="nav-icon">◎</span>Metas
+				</a>
+			</nav>
+
+				<div class="sidebar-footer">
+					<button class="profile-placeholder" id="profile-button" type="button" aria-label="Abrir perfil e configurações">
+						<span class="avatar" id="user-initial">?</span>
+						<span><strong id="user-name">Sua conta</strong><small id="user-email">Conta conectada</small></span>
+					</button>
+					<button class="icon-button" id="logout-button" type="button" aria-label="Sair da conta" title="Sair da conta">↪</button>
+			</div>
+		</aside>
+
+		<main>
+			<header class="topbar">
+				<button class="menu-button" type="button" aria-label="Abrir menu">☰</button>
+				<div>
+					<p class="eyebrow" id="current-date">SÁBADO, 30 DE AGOSTO</p>
+					<h1 id="page-title">Olá, organize seu dinheiro.</h1>
+				</div>
+				<div class="header-actions">
+					<div class="notification-wrap">
+						<button class="icon-button notification" id="notification-button" type="button" aria-label="Notificações" title="Notificações">♧<span id="notification-badge" hidden></span></button>
+						<section class="notification-panel" id="notification-panel" hidden aria-label="Notificações">
+							<div><strong>Notificações</strong><button class="clear-notifications" id="clear-notifications-button" type="button">Limpar</button></div>
+							<div class="notification-list" id="notification-list"></div>
+						</section>
+					</div>
+					<button class="add-button" type="button" data-open-modal>+ Novo lançamento</button>
+				</div>
+			</header>
+
+			<section class="dashboard" id="inicio">
+				<section class="summary-grid" aria-label="Resumo financeiro">
+					<article class="summary-card balance-card">
+						<div class="card-heading"><span>Saldo disponível</span><button class="visibility-button" type="button" aria-label="Ocultar valores" title="Ocultar valores">◉</button></div>
+						<strong class="amount" data-money="0" id="balance-amount">R$ 0,00</strong>
+						<p class="positive-change"><span id="balance-description">Adicione sua renda mensal</span></p>
+						<div class="card-decoration" aria-hidden="true"></div>
+					</article>
+					<article class="summary-card">
+						<div class="card-heading"><span>Receitas no mês</span><span class="card-icon income">↓</span></div>
+						<strong class="amount" data-money="0" id="income-amount">R$ 0,00</strong>
+						<p class="positive-change"><span>receitas registradas</span></p>
+					</article>
+					<article class="summary-card">
+						<div class="card-heading"><span>Despesas no mês</span><span class="card-icon expense">↑</span></div>
+						<strong class="amount" data-money="0" id="expense-amount">R$ 0,00</strong>
+						<p class="negative-change"><span>despesas registradas</span></p>
+					</article>
+				</section>
+
+				<section class="content-grid">
+					<article class="panel overview-panel">
+						<div class="panel-header">
+							<div><p class="section-kicker">Este mês</p><h2>Seu fluxo financeiro</h2></div>
+							<span class="select-button" id="flow-period">Mês atual</span>
+						</div>
+						<div class="chart-legend"><span><i class="legend-dot income-dot"></i>Receitas</span><span><i class="legend-dot expense-dot"></i>Despesas</span></div>
+						<div class="bar-chart" aria-label="Gráfico de receitas e despesas por semana">
+							<div class="chart-column"><div class="bars"><i class="income-bar" id="income-week-1"></i><i class="expense-bar" id="expense-week-1"></i></div><span>Sem 1</span></div>
+							<div class="chart-column"><div class="bars"><i class="income-bar" id="income-week-2"></i><i class="expense-bar" id="expense-week-2"></i></div><span>Sem 2</span></div>
+							<div class="chart-column"><div class="bars"><i class="income-bar" id="income-week-3"></i><i class="expense-bar" id="expense-week-3"></i></div><span>Sem 3</span></div>
+							<div class="chart-column current"><div class="bars"><i class="income-bar" id="income-week-4"></i><i class="expense-bar" id="expense-week-4"></i></div><span>Sem 4</span></div>
+						</div>
+					</article>
+
+					<article class="panel budget-panel" id="orcamento">
+						<div class="panel-header"><div><p class="section-kicker">Planejamento</p><h2>Orçamento mensal</h2></div><button class="more-button" type="button" aria-label="Mais opções">•••</button></div>
+						<div class="budget-ring" id="budget-ring" aria-label="Orçamento mensal utilizado"><div><strong id="budget-percent">0%</strong><span>utilizado</span></div></div>
+						<p class="budget-total"><strong id="budget-spent">R$ 0,00</strong> de <span id="budget-limit">R$ 0,00</span></p>
+						<a class="text-link" href="#lancamentos">Ver detalhes <span>→</span></a>
+					</article>
+				</section>
+
+				<section class="panel transactions-panel" id="lancamentos">
+					<div class="panel-header transactions-header">
+						<div><p class="section-kicker">Atividade recente</p><h2>Últimos lançamentos</h2></div>
+						<label class="month-filter">Per&iacute;odo<select id="transaction-month-filter"><option value="all">Todos os lançamentos</option></select></label>
+					</div>
+					<div class="transaction-list" id="transaction-list"></div>
+				</section>
+
+				<section class="investments-section" id="investimentos">
+					<div class="investments-heading"><div><p class="section-kicker">Construindo o futuro</p><h2>Investimentos</h2></div><button class="add-button" id="add-investment-button" type="button">+ Novo aporte</button></div>
+					<div class="investment-summary"><article><span>Total investido</span><strong id="investment-total">R$ 0,00</strong><small>valor destinado aos seus investimentos</small></article><article><span>Estrat&eacute;gia</span><strong id="investment-frequency">Sem aportes</strong><small>cadastre aportes mensais ou semanais</small></article></div>
+					<div class="investments-list" id="investments-list"></div>
+				</section>
+
+				<section class="goals-section" id="metas">
+					<div><p class="section-kicker">Próximo passo</p><h2>Suas metas</h2></div>
+					<button class="text-button" id="add-goal-button" type="button">Nova meta <span>+</span></button>
+					<div class="goals-list" id="goals-list"></div>
+				</section>
+			</section>
+		</main>
+	</div>
+
+	<dialog class="transaction-modal" id="transaction-modal">
+		<form method="dialog" id="transaction-form">
+			<div class="modal-header"><div><p class="section-kicker" id="transaction-modal-kicker">Novo registro</p><h2 id="transaction-modal-title">Adicionar lançamento</h2></div><button class="close-button" type="button" data-close-modal aria-label="Fechar">×</button></div>
+			<div class="type-switch" role="group" aria-label="Tipo de lançamento"><button class="type-option active" type="button" data-type="expense">Despesa</button><button class="type-option" type="button" data-type="income">Receita</button></div>
+			<label>Descrição<input required id="transaction-description" type="text" placeholder="Ex.: Mercado"></label>
+			<label>Valor<input required id="transaction-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+			<label>Categoria<select id="transaction-category"><option>Alimentação</option><option>Moradia</option><option>Transporte</option><option>Lazer</option><option>Estudo</option><option>Jogos</option><option>Trabalho</option><option>Outros</option></select></label>
+			<label>Data do lançamento<input required id="transaction-date" type="date"></label>
+			<button class="submit-button" id="transaction-submit-button" type="submit">Adicionar lançamento</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal salary-modal" id="salary-modal">
+		<form id="salary-form">
+			<div class="modal-header"><div><p class="section-kicker">PRIMEIRO PASSO</p><h2>Qual &eacute; sua renda mensal?</h2></div></div>
+			<p class="modal-description">Usaremos esse valor como sua receita mensal inicial. Voc&ecirc; poder&aacute; alter&aacute;-lo depois.</p>
+			<label>Sal&aacute;rio ou renda mensal<input required id="salary-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00"></label>
+			<p class="auth-error" id="salary-error" role="alert"></p>
+			<button class="submit-button" type="submit">Come&ccedil;ar a organizar</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="profile-modal">
+		<form id="profile-form">
+			<div class="modal-header"><div><p class="section-kicker">SUA CONTA</p><h2>Perfil e renda</h2></div><button class="close-button" type="button" data-close-profile-modal aria-label="Fechar">×</button></div>
+			<div class="profile-photo-picker"><span class="profile-photo-preview" id="profile-photo-preview">?</span><label class="photo-upload-button" for="profile-photo-input">Escolher foto</label><input id="profile-photo-input" type="file" accept="image/png,image/jpeg,image/webp" hidden></div>
+			<label>Nome<input required id="profile-name-input" type="text" autocomplete="name"></label>
+			<label>E-mail<input id="profile-email-input" type="email" autocomplete="email" readonly></label>
+			<button class="email-change-button" id="open-email-change-button" type="button">Alterar e-mail</button>
+			<label>Renda mensal<input required id="profile-income-input" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00"></label>
+			<p class="profile-hint">A imagem &eacute; compactada antes de ser salva.</p>
+			<div class="profile-actions"><button class="remove-income-button" id="remove-income-button" type="button">Remover renda</button><button class="submit-button" type="submit">Salvar perfil</button></div>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="email-change-modal">
+		<form id="email-change-form">
+			<div class="modal-header"><div><p class="section-kicker">SEGURAN&Ccedil;A DA CONTA</p><h2>Alterar e-mail</h2></div><button class="close-button" type="button" data-close-email-modal aria-label="Fechar">×</button></div>
+			<p class="modal-description">Enviaremos uma confirma&ccedil;&atilde;o para o novo endere&ccedil;o antes de atualizar sua conta.</p>
+			<label>Novo e-mail<input required id="new-email-input" type="email" autocomplete="email" placeholder="novoemail@exemplo.com"></label>
+			<label id="current-password-field">Sua senha atual<input id="current-password-input" type="password" autocomplete="current-password" placeholder="Confirme sua identidade"></label>
+			<p class="auth-error" id="email-change-error" role="alert"></p>
+			<button class="submit-button" id="email-change-submit" type="submit">Enviar confirma&ccedil;&atilde;o</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="goal-modal">
+		<form id="goal-form">
+			<div class="modal-header"><div><p class="section-kicker" id="goal-modal-kicker">NOVA META</p><h2 id="goal-modal-title">Crie um objetivo</h2></div><button class="close-button" type="button" data-close-goal-modal aria-label="Fechar">×</button></div>
+			<label>Nome da meta<input required id="goal-title" type="text" placeholder="Ex.: Viagem de férias"></label>
+			<label>Valor que deseja atingir<input required id="goal-target" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+			<label>Quanto você já guardou<input required id="goal-current" type="number" min="0" step="0.01" value="0" placeholder="0,00"></label>
+			<button class="submit-button" id="goal-submit-button" type="submit">Criar meta</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="investment-modal">
+		<form id="investment-form">
+			<div class="modal-header"><div><p class="section-kicker">NOVO APORTE</p><h2>Adicionar investimento</h2></div><button class="close-button" type="button" data-close-investment-modal aria-label="Fechar">×</button></div>
+			<label>Nome do investimento<input required id="investment-name" type="text" placeholder="Ex.: Reserva de emerg&ecirc;ncia"></label>
+			<label>Valor do aporte<input required id="investment-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+			<label>Tipo<select id="investment-type"><option value="CDB">CDB</option><option value="Ações">Ações</option><option value="Fundos imobiliários">Fundos imobiliários</option><option value="ETF">ETF</option><option value="Criptomoedas">Criptomoedas</option><option value="Outros">Outros</option></select></label>
+			<label>Frequ&ecirc;ncia do aporte<select id="investment-frequency-input"><option value="Único">Aporte único</option><option value="Semanal">Semanal</option><option value="Mensal">Mensal</option></select></label>
+			<label>Taxa anual estimada <span class="optional-label">opcional</span><input id="investment-rate" type="number" min="0" step="0.01" placeholder="Ex.: 12,50"></label>
+			<button class="submit-button" type="submit">Registrar aporte</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal confirmation-modal" id="confirmation-modal">
+		<section class="confirmation-content" aria-labelledby="confirmation-title">
+			<span class="confirmation-icon" aria-hidden="true">!</span>
+			<p class="section-kicker">CONFIRMA&Ccedil;&Atilde;O NECESS&Aacute;RIA</p>
+			<h2 id="confirmation-title">Excluir item?</h2>
+			<p id="confirmation-message">Essa a&ccedil;&atilde;o n&atilde;o pode ser desfeita.</p>
+			<div class="confirmation-actions"><button class="cancel-button" id="cancel-delete-button" type="button">Cancelar</button><button class="delete-button" id="confirm-delete-button" type="button">Excluir</button></div>
+		</section>
+	</dialog>
+	<script type="module" src="script.js"></script>
+</body>
+</html>
