@@ -8,6 +8,10 @@
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+	<meta name="theme-color" content="#173a34">
+	<link rel="manifest" href="manifest.webmanifest">
+	<link rel="apple-touch-icon" href="icon-192.png">
+	<script>document.documentElement.dataset.theme = localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');</script>
 	<link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -62,8 +66,17 @@
 				<a class="nav-item" href="#lancamentos" data-view="Lançamentos">
 					<span class="nav-icon">↕</span>Lançamentos
 				</a>
+				<a class="nav-item" href="#contas-a-pagar" data-view="Contas a pagar">
+					<span class="nav-icon">!</span>Contas a pagar
+				</a>
+				<a class="nav-item" href="#contas" data-view="Contas e cartões">
+					<span class="nav-icon">▭</span>Contas e cartões
+				</a>
 				<a class="nav-item" href="#orcamento" data-view="Orçamento">
 					<span class="nav-icon">◔</span>Orçamento
+				</a>
+				<a class="nav-item" href="#relatorios" data-view="Relatórios">
+					<span class="nav-icon">▤</span>Relatórios
 				</a>
 				<a class="nav-item" href="#investimentos" data-view="Investimentos">
 					<span class="nav-icon">↗</span>Investimentos
@@ -90,6 +103,7 @@
 					<h1 id="page-title">Olá, organize seu dinheiro.</h1>
 				</div>
 				<div class="header-actions">
+					<button class="icon-button" id="theme-button" type="button" aria-label="Alternar tema claro/escuro" title="Alternar tema claro/escuro">◐</button>
 					<div class="notification-wrap">
 						<button class="icon-button notification" id="notification-button" type="button" aria-label="Notificações" title="Notificações">♧<span id="notification-badge" hidden></span></button>
 						<section class="notification-panel" id="notification-panel" hidden aria-label="Notificações">
@@ -121,6 +135,12 @@
 					</article>
 				</section>
 
+				<section class="insights-grid" aria-label="Indicadores">
+					<article class="insight-card"><span>Previsão para o fim do mês</span><strong id="forecast-amount" data-money="0">R$ 0,00</strong><small id="forecast-description">Registre lançamentos para ver a previsão.</small></article>
+					<article class="insight-card"><span>Comparado ao mês passado</span><strong id="comparison-value">—</strong><small id="comparison-description">Sem dados do mês passado para comparar.</small></article>
+					<article class="insight-card"><span>Reserva de emergência</span><strong id="reserve-months">—</strong><small id="reserve-description">Registre despesas para calcular sua reserva.</small><i class="mini-progress"><b id="reserve-progress"></b></i></article>
+				</section>
+
 				<section class="content-grid">
 					<article class="panel overview-panel">
 						<div class="panel-header">
@@ -137,11 +157,50 @@
 					</article>
 
 					<article class="panel budget-panel" id="orcamento">
-						<div class="panel-header"><div><p class="section-kicker">Planejamento</p><h2>Orçamento mensal</h2></div><button class="more-button" type="button" aria-label="Mais opções">•••</button></div>
+						<div class="panel-header"><div><p class="section-kicker">Planejamento</p><h2>Orçamento mensal</h2></div><button class="more-button" id="budget-more-button" type="button" aria-label="Definir limites por categoria" title="Definir limites por categoria">•••</button></div>
 						<div class="budget-ring" id="budget-ring" aria-label="Orçamento mensal utilizado"><div><strong id="budget-percent">0%</strong><span>utilizado</span></div></div>
 						<p class="budget-total"><strong id="budget-spent">R$ 0,00</strong> de <span id="budget-limit">R$ 0,00</span></p>
 						<a class="text-link" href="#lancamentos">Ver detalhes <span>→</span></a>
 					</article>
+				</section>
+
+				<section class="content-grid even" id="relatorios">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker" id="category-period">Este mês</p><h2>Gastos por categoria</h2></div><button class="text-button" id="manage-categories-button" type="button">Categorias <span>⚙</span></button></div>
+						<div class="category-chart"><div class="category-donut" id="category-donut"><div><strong id="category-total" data-money="0">R$ 0,00</strong><span>em despesas</span></div></div><ul class="category-legend" id="category-legend"></ul></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Limites do mês</p><h2>Orçamento por categoria</h2></div><button class="text-button" id="edit-category-budgets-button" type="button">Definir <span>+</span></button></div>
+						<div class="category-budget-list" id="category-budget-list"></div>
+					</article>
+				</section>
+
+				<section class="content-grid even">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Últimos 6 meses</p><h2>Histórico mensal</h2></div></div>
+						<div class="chart-legend"><span><i class="legend-dot income-dot"></i>Receitas</span><span><i class="legend-dot expense-dot"></i>Despesas e aportes</span></div>
+						<div class="bar-chart history-chart" id="history-chart" aria-label="Receitas e despesas dos últimos 6 meses"></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Análise automática</p><h2>Insights</h2></div></div>
+						<ul class="insight-list" id="insight-list"></ul>
+					</article>
+				</section>
+
+				<section class="content-grid even" id="contas-a-pagar">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Vencimentos</p><h2>Contas a pagar</h2></div><strong class="select-button" id="bills-total" data-money="0">R$ 0,00</strong></div>
+						<div class="bill-list" id="bill-list"></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Todo mês</p><h2>Lançamentos fixos</h2></div></div>
+						<div class="recurring-list" id="recurring-list"></div>
+					</article>
+				</section>
+
+				<section class="panel accounts-panel" id="contas">
+					<div class="panel-header"><div><p class="section-kicker">Onde está seu dinheiro</p><h2>Contas e cartões</h2></div><button class="text-button" id="add-account-button" type="button">Nova conta <span>+</span></button></div>
+					<div class="accounts-grid" id="accounts-grid"></div>
 				</section>
 
 				<section class="panel transactions-panel" id="lancamentos">
@@ -149,12 +208,35 @@
 						<div><p class="section-kicker">Atividade recente</p><h2>Últimos lançamentos</h2></div>
 						<label class="month-filter">Per&iacute;odo<select id="transaction-month-filter"><option value="all">Todos os lançamentos</option></select></label>
 					</div>
+					<div class="transaction-toolbar">
+						<input id="transaction-search" type="search" placeholder="Buscar por descrição, tag ou observação" aria-label="Buscar lançamentos">
+						<select id="filter-type" aria-label="Filtrar por tipo"><option value="all">Todos os tipos</option><option value="expense">Despesas</option><option value="income">Receitas</option><option value="transfer">Transferências</option></select>
+						<select id="filter-category" aria-label="Filtrar por categoria"><option value="all">Todas as categorias</option></select>
+						<select id="filter-status" aria-label="Filtrar por situação"><option value="all">Qualquer situação</option><option value="paid">Pagos</option><option value="pending">Pendentes</option></select>
+						<input id="filter-min" type="number" min="0" step="0.01" placeholder="Valor mín." aria-label="Valor mínimo">
+						<input id="filter-max" type="number" min="0" step="0.01" placeholder="Valor máx." aria-label="Valor máximo">
+					</div>
+					<div class="transaction-tools">
+						<button class="text-button" id="export-csv-button" type="button">Exportar CSV/Excel</button>
+						<button class="text-button" id="print-report-button" type="button">Relatório em PDF</button>
+						<label class="text-button import-button" for="import-file-input">Importar extrato (OFX/CSV)</label><input id="import-file-input" type="file" accept=".csv,.ofx,text/csv" hidden>
+					</div>
+					<p class="transaction-count" id="transaction-count"></p>
 					<div class="transaction-list" id="transaction-list"></div>
 				</section>
 
 				<section class="investments-section" id="investimentos">
 					<div class="investments-heading"><div><p class="section-kicker">Construindo o futuro</p><h2>Investimentos</h2></div><button class="add-button" id="add-investment-button" type="button">+ Novo aporte</button></div>
 					<div class="investment-summary"><article><span>Total investido</span><strong id="investment-total">R$ 0,00</strong><small>valor destinado aos seus investimentos</small></article><article><span>Estrat&eacute;gia</span><strong id="investment-frequency">Sem aportes</strong><small>cadastre aportes mensais ou semanais</small></article></div>
+					<div class="simulator">
+						<div><p class="section-kicker">Simulador de juros compostos</p><h3>Quanto seu dinheiro pode render</h3></div>
+						<div class="simulator-fields">
+							<label>Valor inicial<input id="sim-initial" type="number" min="0" step="0.01" value="0"></label>
+							<label>Aporte mensal<input id="sim-monthly" type="number" min="0" step="0.01" value="0"></label>
+							<label>Taxa anual (%)<input id="sim-rate" type="number" min="0" step="0.01" value="10"></label>
+						</div>
+						<div class="simulator-results" id="simulator-results"></div>
+					</div>
 					<div class="investments-list" id="investments-list"></div>
 				</section>
 
@@ -170,11 +252,26 @@
 	<dialog class="transaction-modal" id="transaction-modal">
 		<form method="dialog" id="transaction-form">
 			<div class="modal-header"><div><p class="section-kicker" id="transaction-modal-kicker">Novo registro</p><h2 id="transaction-modal-title">Adicionar lançamento</h2></div><button class="close-button" type="button" data-close-modal aria-label="Fechar">×</button></div>
-			<div class="type-switch" role="group" aria-label="Tipo de lançamento"><button class="type-option active" type="button" data-type="expense">Despesa</button><button class="type-option" type="button" data-type="income">Receita</button></div>
-			<label>Descrição<input required id="transaction-description" type="text" placeholder="Ex.: Mercado"></label>
-			<label>Valor<input required id="transaction-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
-			<label>Categoria<select id="transaction-category"><option>Alimentação</option><option>Moradia</option><option>Transporte</option><option>Lazer</option><option>Estudo</option><option>Jogos</option><option>Trabalho</option><option>Outros</option></select></label>
-			<label>Data do lançamento<input required id="transaction-date" type="date"></label>
+			<div class="type-switch three" role="group" aria-label="Tipo de lançamento"><button class="type-option active" type="button" data-type="expense">Despesa</button><button class="type-option" type="button" data-type="income">Receita</button><button class="type-option" type="button" data-type="transfer">Transferência</button></div>
+			<label>Descrição<input required id="transaction-description" type="text" maxlength="80" placeholder="Ex.: Mercado"></label>
+			<div class="form-row">
+				<label><span id="transaction-amount-label">Valor</span><input required id="transaction-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+				<label>Data<input required id="transaction-date" type="date"></label>
+			</div>
+			<label data-field="category">Categoria<select id="transaction-category"></select></label>
+			<label data-field="account">Conta ou cartão<select id="transaction-account"><option value="">Sem conta</option></select></label>
+			<div class="form-row" data-field="transfer" hidden>
+				<label>De<select id="transfer-from"></select></label>
+				<label>Para<select id="transfer-to"></select></label>
+			</div>
+			<div class="form-row" data-field="new-only">
+				<label data-field="installments">Parcelas<input id="transaction-installments" type="number" min="1" max="60" step="1" value="1"></label>
+				<label class="check-field"><input id="transaction-recurring" type="checkbox">Repetir todo mês</label>
+			</div>
+			<label class="check-field" data-field="paid"><input id="transaction-paid" type="checkbox" checked>Já foi pago / recebido</label>
+			<label>Tags <span class="optional-label">separe por vírgula</span><input id="transaction-tags" type="text" maxlength="120" placeholder="Ex.: viagem, presente"></label>
+			<label>Observação <span class="optional-label">opcional</span><textarea id="transaction-notes" rows="2" maxlength="300"></textarea></label>
+			<p class="auth-error" id="transaction-error" role="alert"></p>
 			<button class="submit-button" id="transaction-submit-button" type="submit">Adicionar lançamento</button>
 		</form>
 	</dialog>
@@ -215,6 +312,7 @@
 			<label>Nome da meta<input required id="goal-title" type="text" placeholder="Ex.: Viagem de férias"></label>
 			<label>Valor que deseja atingir<input required id="goal-target" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
 			<label>Quanto você já guardou<input required id="goal-current" type="number" min="0" step="0.01" value="0" placeholder="0,00"></label>
+			<label>Prazo <span class="optional-label">opcional</span><input id="goal-deadline" type="date"></label>
 			<button class="submit-button" id="goal-submit-button" type="submit">Criar meta</button>
 		</form>
 	</dialog>
@@ -237,6 +335,61 @@
 			<p id="confirmation-message">Essa a&ccedil;&atilde;o n&atilde;o pode ser desfeita.</p>
 			<div class="confirmation-actions"><button class="cancel-button" id="cancel-delete-button" type="button">Cancelar</button><button class="delete-button" id="confirm-delete-button" type="button">Excluir</button></div>
 		</section>
+	</dialog>
+	<dialog class="transaction-modal" id="contribution-modal">
+		<form id="contribution-form">
+			<div class="modal-header"><div><p class="section-kicker">GUARDAR DINHEIRO</p><h2 id="contribution-title">Meta</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<label>Valor<input required id="contribution-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+			<label class="check-field"><input id="contribution-deduct" type="checkbox" checked>Descontar do saldo disponível</label>
+			<button class="submit-button" type="submit">Guardar na meta</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="account-modal">
+		<form id="account-form">
+			<div class="modal-header"><div><p class="section-kicker" id="account-modal-kicker">NOVA CONTA</p><h2 id="account-modal-title">Adicionar conta</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<label>Nome<input required id="account-name" type="text" maxlength="40" placeholder="Ex.: Nubank, Carteira"></label>
+			<label>Tipo<select id="account-type"><option value="checking">Conta corrente</option><option value="savings">Poupança</option><option value="cash">Dinheiro</option><option value="credit">Cartão de crédito</option></select></label>
+			<label data-account-field="regular">Saldo inicial<input id="account-initial" type="number" step="0.01" value="0"></label>
+			<label data-account-field="credit">Limite do cartão<input id="account-limit" type="number" min="0" step="0.01" placeholder="0,00"></label>
+			<div class="form-row" data-account-field="credit">
+				<label>Dia do fechamento<input id="account-closing" type="number" min="1" max="31" value="1"></label>
+				<label>Dia do vencimento<input id="account-due" type="number" min="1" max="31" value="10"></label>
+			</div>
+			<button class="submit-button" id="account-submit" type="submit">Salvar conta</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="budget-modal">
+		<form id="budget-form">
+			<div class="modal-header"><div><p class="section-kicker">LIMITES POR CATEGORIA</p><h2>Orçamento por categoria</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<p class="modal-description">Defina quanto pode gastar por mês em cada categoria. Deixe em branco para não ter limite.</p>
+			<div class="budget-fields" id="budget-fields"></div>
+			<button class="submit-button" type="submit">Salvar limites</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="category-modal">
+		<form id="category-form">
+			<div class="modal-header"><div><p class="section-kicker">PERSONALIZAR</p><h2>Suas categorias</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<div class="category-manager" id="category-manager"></div>
+			<div class="form-row three">
+				<label>Nova categoria<input required id="category-name" type="text" maxlength="30" placeholder="Ex.: Pets"></label>
+				<label>Ícone<input id="category-icon" type="text" maxlength="2" placeholder="★"></label>
+				<label>Cor<input id="category-color" type="color" value="#13795b"></label>
+			</div>
+			<p class="auth-error" id="category-error" role="alert"></p>
+			<button class="submit-button" type="submit">Adicionar categoria</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="import-modal">
+		<form id="import-form">
+			<div class="modal-header"><div><p class="section-kicker">IMPORTAR EXTRATO</p><h2>Revisar importação</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<p class="modal-description" id="import-summary"></p>
+			<div class="import-preview" id="import-preview"></div>
+			<label class="check-field"><input id="import-invert" type="checkbox">Valores positivos são despesas (comum em faturas de cartão)</label>
+			<label>Categoria das despesas<select id="import-category"></select></label>
+			<label>Conta ou cartão<select id="import-account"><option value="">Sem conta</option></select></label>
+			<p class="auth-error" id="import-error" role="alert"></p>
+			<button class="submit-button" id="import-submit" type="submit">Importar lançamentos</button>
+		</form>
 	</dialog>
 	<script type="module" src="script.js"></script>
 </body>

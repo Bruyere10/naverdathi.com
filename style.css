@@ -10,6 +10,10 @@
 	--coral-soft: #fae5e0;
 	--yellow: #f6c85f;
 	--radius: 8px;
+	--track: #ebf0ed;
+	--soft: #f1f4f2;
+	--line-soft: #edf0ee;
+	--credit-soft: #f3effa;
 }
 
 * { box-sizing: border-box; }
@@ -64,3 +68,145 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: clamp(20px, 2.3vw
 @media (max-width: 560px) { .topbar { min-height: 100px; padding: 20px 16px; }.eyebrow { font-size: 9px; }h1 { font-size: 19px; }.dashboard { padding: 18px 16px 35px; }.header-actions .notification { display: none; }.add-button { padding: 10px; font-size: 11px; }.summary-grid { grid-template-columns: 1fr; gap: 10px; }.balance-card { grid-column: auto; }.summary-card { min-height: 142px; }.panel { padding: 17px; }.select-button { font-size: 10px; }.bar-chart { height: 155px; gap: 5px; }.goal-item { grid-template-columns: 1fr auto; }.goal-progress { grid-column: 1 / -1; }.transaction-value { font-size: 10px; }.transactions-header .text-button { display: none; } }
 @media (max-width: 560px) { .transactions-header { align-items: end; }.month-filter select { min-width: 128px; max-width: 145px; } }
 @media (max-width: 560px) { .investments-section { padding: 17px; }.investment-summary { grid-template-columns: 1fr; }.investment-item { grid-template-columns: 1fr auto; }.investment-item .item-actions { grid-column: 1 / -1; }.investments-heading .add-button { white-space: nowrap; } }
+
+/* Formulário de lançamento */
+.transaction-modal { max-height: calc(100vh - 32px); overflow-y: auto; }
+.type-switch.three { grid-template-columns: repeat(3, 1fr); }
+.transaction-modal textarea { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 5px; outline-color: var(--green); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; resize: vertical; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+.form-row.three { grid-template-columns: 1fr 64px 64px; }
+.transaction-modal .check-field { display: flex; align-items: center; gap: 8px; min-height: 40px; font-weight: 600; }
+.transaction-modal .check-field input { width: auto; }
+.transaction-modal input[type="color"] { height: 40px; padding: 3px; }
+.transaction-modal .auth-error:empty { display: none; }
+
+/* Indicadores */
+.insights-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.insight-card { display: grid; align-content: start; gap: 7px; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.insight-card > span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.insight-card strong { font-family: "DM Mono", monospace; font-size: 20px; }
+.insight-card small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.is-positive { color: var(--green); }
+.is-negative { color: var(--coral); }
+.mini-progress { display: block; height: 6px; overflow: hidden; border-radius: 10px; background: var(--track); }
+.mini-progress b { display: block; width: 0; height: 100%; background: var(--green); }
+.content-grid.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.empty-state { margin: 0; padding: 20px 0; color: var(--muted); font-size: 12px; line-height: 1.5; text-align: center; }
+
+/* Gráfico por categoria */
+.category-chart { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: center; gap: 22px; margin-top: 20px; }
+.category-donut { position: relative; display: grid; place-items: center; width: 170px; height: 170px; border-radius: 50%; background: var(--track); }
+.category-donut::before { content: ""; position: absolute; inset: 24px; border-radius: 50%; background: var(--panel); }
+.category-donut div { position: relative; text-align: center; }
+.category-donut strong { display: block; font-family: "DM Mono", monospace; font-size: 14px; }
+.category-donut span { color: var(--muted); font-size: 10px; }
+.category-legend { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.category-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto 36px; align-items: center; gap: 8px; font-size: 12px; }
+.category-legend li.empty-row { display: block; color: var(--muted); }
+.category-legend i { width: 10px; height: 10px; border-radius: 3px; }
+.category-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-legend strong { font-family: "DM Mono", monospace; font-size: 11px; }
+.category-legend small { color: var(--muted); font-size: 10px; text-align: right; }
+
+/* Orçamento por categoria */
+.category-budget-list { display: grid; gap: 15px; margin-top: 20px; }
+.category-budget-item { display: grid; gap: 6px; font-size: 12px; }
+.category-budget-item > div { display: flex; justify-content: space-between; gap: 10px; }
+.category-budget-item span { color: var(--muted); font-family: "DM Mono", monospace; font-size: 11px; }
+.category-budget-item i { display: block; height: 7px; overflow: hidden; border-radius: 10px; background: var(--track); }
+.category-budget-item b { display: block; height: 100%; background: var(--green); }
+.category-budget-item small { color: var(--muted); font-size: 10px; }
+.category-budget-item.warning b { background: var(--yellow); }
+.category-budget-item.over b { background: var(--coral); }
+.category-budget-item.over small { color: var(--coral); font-weight: 700; }
+.budget-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* Histórico e insights */
+.history-chart { grid-template-columns: repeat(6, 1fr); }
+.insight-list { display: grid; gap: 10px; margin: 20px 0 0; padding: 0; list-style: none; }
+.insight-list li { position: relative; padding: 10px 12px 10px 32px; border-radius: 6px; background: var(--soft); font-size: 12px; line-height: 1.5; }
+.insight-list li::before { content: "✦"; position: absolute; left: 12px; color: var(--green); }
+
+/* Contas a pagar e fixos */
+.bill-list, .recurring-list { margin-top: 16px; }
+.bill-item, .recurring-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.bill-item strong, .recurring-item strong { display: block; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.bill-item span, .recurring-item span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.bill-item.soon span { color: #b7862a; }
+.bill-item.overdue span { color: var(--coral); font-weight: 700; }
+.bill-item .bill-value, .recurring-item .bill-value { font-family: "DM Mono", monospace; font-size: 12px; }
+.pay-button { border: 1px solid var(--green); border-radius: 5px; padding: 6px 9px; background: transparent; color: var(--green); font-size: 11px; font-weight: 700; }
+.pay-button:hover { background: var(--green); color: #fff; }
+
+/* Contas e cartões */
+.accounts-panel { margin-top: 16px; }
+.accounts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+.accounts-grid > .empty-state { grid-column: 1 / -1; }
+.account-card { display: grid; align-content: start; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--soft); }
+.account-card.credit { background: var(--credit-soft); }
+.account-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.account-card header strong { display: block; font-size: 13px; }
+.account-card small { display: block; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.account-balance { font-family: "DM Mono", monospace; font-size: 18px; }
+
+/* Busca, filtros e ferramentas */
+.transaction-toolbar { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(3, minmax(110px, 1fr)) repeat(2, minmax(90px, .7fr)); gap: 8px; margin-top: 18px; }
+.transaction-toolbar input, .transaction-toolbar select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 5px; outline-color: var(--green); background: var(--panel); color: var(--ink); font-size: 12px; }
+.transaction-tools { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; }
+.import-button { cursor: pointer; }
+.transaction-count { margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+.transaction-info .status-badge { display: inline-block; margin: 0 0 0 6px; padding: 1px 6px; border-radius: 8px; background: var(--coral-soft); color: var(--coral); font-size: 9px; font-weight: 800; vertical-align: middle; }
+.transaction-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.transaction-tags em { padding: 2px 7px; border-radius: 10px; background: var(--green-soft); color: var(--green); font-size: 10px; font-style: normal; font-weight: 700; }
+.transaction-note { display: block; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 11px; font-style: italic; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-value { color: var(--muted); }
+
+/* Metas e simulador */
+.goal-progress small { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
+.simulator { display: grid; gap: 14px; margin-bottom: 20px; padding: 18px; border: 1px solid #d1e8dc; border-radius: 6px; background: var(--panel); }
+.simulator h3 { margin: 0; font-size: 15px; }
+.simulator-fields, .simulator-results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.simulator-fields label { display: grid; gap: 5px; font-size: 11px; font-weight: 700; }
+.simulator-fields input { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 5px; outline-color: var(--green); background: var(--panel); color: var(--ink); }
+.simulator-results article { padding: 12px; border-radius: 6px; background: var(--green-soft); }
+.simulator-results span, .simulator-results small { display: block; color: var(--muted); font-size: 10px; }
+.simulator-results strong { display: block; margin: 5px 0 3px; color: var(--green); font-family: "DM Mono", monospace; font-size: 15px; }
+
+/* Categorias e importação */
+.category-manager { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; }
+.category-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 14px; font-size: 11px; font-weight: 700; }
+.category-chip button { border: 0; padding: 0; background: transparent; color: var(--coral); font-size: 14px; line-height: 1; }
+.import-preview { display: grid; gap: 6px; max-height: 190px; overflow-y: auto; }
+.import-preview div { display: flex; justify-content: space-between; gap: 10px; padding: 7px 9px; border-radius: 5px; background: var(--soft); font-size: 11px; }
+.import-preview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-preview strong { font-family: "DM Mono", monospace; white-space: nowrap; }
+
+/* Tema escuro */
+[data-theme="dark"] { color-scheme: dark; --ink: #e6eeea; --muted: #93a39c; --line: #2b3a36; --line-soft: #24312e; --canvas: #0f1715; --panel: #16211e; --green: #3dbb8c; --green-soft: #1d3a30; --coral: #f07f6e; --coral-soft: #3a2421; --track: #26332f; --soft: #1c2925; --credit-soft: #221d30; }
+[data-theme="dark"] .auth-form-area { background: var(--canvas); }
+[data-theme="dark"] .auth-form input, [data-theme="dark"] .notification-panel, [data-theme="dark"] .month-filter select, [data-theme="dark"] .transaction-modal, [data-theme="dark"] .transaction-modal input, [data-theme="dark"] .transaction-modal select, [data-theme="dark"] .investment-summary article, [data-theme="dark"] .cancel-button, [data-theme="dark"] .type-option.active { background: var(--panel); color: var(--ink); }
+[data-theme="dark"] .transaction-modal input[readonly], [data-theme="dark"] .type-switch, [data-theme="dark"] .item-action:hover { background: var(--soft); }
+[data-theme="dark"] .investments-section { border-color: #234036; background: #13261f; }
+[data-theme="dark"] .investment-summary article, [data-theme="dark"] .simulator, [data-theme="dark"] .investments-list, [data-theme="dark"] .investment-item { border-color: #234036; }
+[data-theme="dark"] .investment-name > span { background: var(--green-soft); }
+[data-theme="dark"] .transaction, [data-theme="dark"] .notification-item { border-color: var(--line-soft); }
+[data-theme="dark"] .bar-chart { background: repeating-linear-gradient(to bottom, transparent 0, transparent 45px, var(--line-soft) 46px); }
+[data-theme="dark"] .goal-progress i { background: var(--track); }
+[data-theme="dark"] .goal-icon { background: #1b3140; }
+[data-theme="dark"] .balance-card { border-color: #146b50; background: #146b50; }
+[data-theme="dark"] .positive-change { color: var(--green); }
+
+@media (max-width: 850px) { .insights-grid, .content-grid.even { grid-template-columns: 1fr; }.transaction-toolbar { grid-template-columns: 1fr 1fr; }.transaction-toolbar input[type="search"] { grid-column: 1 / -1; } }
+@media (max-width: 560px) { .category-chart { grid-template-columns: 1fr; justify-items: center; }.category-legend { width: 100%; }.simulator-fields, .simulator-results, .budget-fields { grid-template-columns: 1fr; }.bill-item, .recurring-item { grid-template-columns: minmax(0, 1fr) auto; }.bill-item .pay-button { grid-column: 1 / -1; justify-self: start; }.form-row.three { grid-template-columns: 1fr 56px 56px; } }
+
+/* Relatório em PDF (impressão) */
+@media print {
+	[data-theme="dark"] { --ink: #14211f; --muted: #6d7973; --line: #dbe4df; --line-soft: #edf0ee; --canvas: #fff; --panel: #fff; --soft: #f1f4f2; --track: #ebf0ed; --green: #13795b; --green-soft: #def3e9; --coral: #d75947; --coral-soft: #fae5e0; --credit-soft: #f3effa; }
+	body { background: #fff; }
+	.app-shell { display: block; }
+	.sidebar, .header-actions, .menu-button, .transaction-toolbar, .transaction-tools, .item-actions, .pay-button, .text-button, .add-button, .more-button, .visibility-button, .simulator, dialog { display: none !important; }
+	.dashboard { padding: 16px 0; }
+	.topbar { min-height: auto; padding: 0 0 12px; }
+	.panel, .summary-card, .insight-card, .investments-section, .account-card { break-inside: avoid; }
+	* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
