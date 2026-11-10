@@ -18,21 +18,43 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import {
-	addDoc,
 	collection,
-	deleteDoc,
+	deleteDoc as firestoreDeleteDoc,
 	doc,
 	deleteField,
 	getDoc,
 	getFirestore,
 	increment,
+	initializeFirestore,
 	onSnapshot,
 	orderBy,
+	persistentLocalCache,
+	persistentMultipleTabManager,
 	query,
-	setDoc,
-	updateDoc,
-	writeBatch
+	setDoc as firestoreSetDoc,
+	updateDoc as firestoreUpdateDoc,
+	writeBatch as firestoreWriteBatch
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import {
+	addMonths, clampDay, currencyFormatter, dateInMonth, daysBetween, formatMonthLabel, formatShortMonth,
+	formatTransactionDate, getCurrentMonth, getDaysInMonth, getToday, getTransactionDate, isPaid, isTransfer,
+	normalizeText, parseTags, roundMoney, stripInstallmentSuffix, sumAmounts, sumByType, toDateKey
+} from './modules/utils.js';
+import { assignImportIds, escapeCsvText, parseCsv, parseOfx } from './modules/import.js';
+import {
+	getCardSummary, getInvoice, getInvoiceDates, getInvoiceMonth, getPendingInvoices, invoiceStatusLabels
+} from './modules/invoices.js';
+import { looksLikeSubscription, parseQuickEntry, suggestCategory } from './modules/quick-entry.js';
+import {
+	buildCommitments, buildForecast, buildRetrospective, buildRule503020, computeAchievements, defaultCategoryGroups,
+	getBudgetStreak, getCategoryGroup, getEndOfMonthForecast, getGoalExpectedProgress, getMonthIncome, getUnusualSpending, ruleGroups
+} from './modules/planning.js';
+import { getAccountBalance as computeAccountBalance, getAvailableBalance, isRealIncome } from './modules/balance.js';
+import { dataUrlToObjectUrl, prepareReceipt } from './modules/receipts.js';
+import {
+	clearScheduledAlerts, registerPeriodicCheck, requestSystemNotifications, saveScheduledAlerts,
+	showSystemNotification, systemNotificationsSupported
+} from './modules/system-notifications.js';
 
 const firebaseConfig = {
 	apiKey: 'AIzaSyC8Kv4HMGQg31A5_xXB4pQGowZw3L-MLb8',
@@ -45,7 +67,49 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const database = getFirestore(app);
+const database = createDatabase();
+
+// Offline mode: data is cached on the device and writes are queued until the connection returns.
+function createDatabase() {
+	try {
+		return initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+	} catch (error) {
+		console.warn('Cache offline indisponível neste navegador:', error);
+		return getFirestore(app);
+	}
+}
+
+// While offline, Firestore only resolves writes after reaching the server, so the UI must not wait for them.
+function persist(writePromise) {
+	if (navigator.onLine) return writePromise;
+	writePromise.catch((error) => console.error('Erro ao sincronizar alteração offline:', error));
+	return Promise.resolve();
+}
+
+function setDoc(...args) {
+	return persist(firestoreSetDoc(...args));
+}
+
+function updateDoc(...args) {
+	return persist(firestoreUpdateDoc(...args));
+}
+
+function deleteDoc(...args) {
+	return persist(firestoreDeleteDoc(...args));
+}
+
+async function addDoc(collectionReference, data) {
+	const reference = doc(collectionReference);
+	await setDoc(reference, data);
+	return reference;
+}
+
+function writeBatch(firestore) {
+	const batch = firestoreWriteBatch(firestore);
+	const commit = batch.commit.bind(batch);
+	batch.commit = () => persist(commit());
+	return batch;
+}
 const googleProvider = new GoogleAuthProvider();
 const authScreen = document.querySelector('#auth-screen');
 const appShell = document.querySelector('#app-shell');
@@ -101,6 +165,28 @@ let contributionGoal;
 let pendingImport = [];
 let isGeneratingRecurring = false;
 const notifiedBills = new Set();
+const defaultAlertSettings = {
+	bills: true, billDays: 3, invoice: true, invoiceDays: 3, cardLimit: true, cardLimitPercent: 80,
+	budget: true, forecast: true, unusual: true, goals: true, achievements: true, push: false
+};
+let debts = [];
+let stopDebtListener;
+let alertSettings = { ...defaultAlertSettings };
+let sentAlerts = {};
+let categoryGroups = {};
+let invoiceView = { cardId: '', month: '' };
+let calendarMonth = getCurrentMonth();
+let selectedCalendarDate = getToday();
+let categoryTouched = false;
+let editingReceipt = null;
+let removeEditingReceipt = false;
+let alertTimer;
+let lastForecastValue = 0;
+let currentBalance = 0;
+let debtDirection = 'receivable';
+let toastTimer;
+let toastAction;
+const loadedCollections = new Set();
 const defaultCategories = [
 	{ name: 'Alimentação', icon: '⌁', color: '#d06d37' },
 	{ name: 'Moradia', icon: '⌂', color: '#4371b8' },
@@ -124,6 +210,14 @@ const contributionForm = document.querySelector('#contribution-form');
 const importModal = document.querySelector('#import-modal');
 const importForm = document.querySelector('#import-form');
 const importFileInput = document.querySelector('#import-file-input');
+const invoiceModal = document.querySelector('#invoice-modal');
+const alertSettingsModal = document.querySelector('#alert-settings-modal');
+const alertSettingsForm = document.querySelector('#alert-settings-form');
+const debtModal = document.querySelector('#debt-modal');
+const debtForm = document.querySelector('#debt-form');
+const retrospectiveModal = document.querySelector('#retrospective-modal');
+const categoryGroupsModal = document.querySelector('#category-groups-modal');
+const categoryGroupsForm = document.querySelector('#category-groups-form');
 const simulatorInputs = ['#sim-initial', '#sim-monthly', '#sim-rate'].map((selector) => document.querySelector(selector));
 const transactionFilters = ['#transaction-search', '#filter-type', '#filter-category', '#filter-status', '#filter-min', '#filter-max']
 	.map((selector) => document.querySelector(selector));
@@ -135,11 +229,6 @@ const transactionMonthFilter = document.querySelector('#transaction-month-filter
 const sidebar = document.querySelector('.sidebar');
 let transactionType = 'expense';
 let valuesVisible = true;
-
-const currencyFormatter = new Intl.NumberFormat('pt-BR', {
-	style: 'currency',
-	currency: 'BRL'
-});
 
 function updateCurrentDate() {
 	const today = new Date();
@@ -186,63 +275,8 @@ function populateAccountSelects() {
 	});
 }
 
-function toDateKey(date) {
-	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function getToday() {
-	return toDateKey(new Date());
-}
-
-function getCurrentMonth() {
-	return getToday().slice(0, 7);
-}
-
-function addMonths(monthKey, amount) {
-	const [year, month] = monthKey.split('-').map(Number);
-	return toDateKey(new Date(year, month - 1 + amount, 1)).slice(0, 7);
-}
-
-function getDaysInMonth(monthKey) {
-	const [year, month] = monthKey.split('-').map(Number);
-	return new Date(year, month, 0).getDate();
-}
-
-function dateInMonth(monthKey, day) {
-	return `${monthKey}-${String(Math.min(day, getDaysInMonth(monthKey))).padStart(2, '0')}`;
-}
-
-function daysBetween(fromDate, toDate) {
-	return Math.round((new Date(`${toDate}T12:00:00`) - new Date(`${fromDate}T12:00:00`)) / 86400000);
-}
-
-function formatMonthLabel(monthKey) {
-	const label = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date(`${monthKey}-01T12:00:00`));
-	return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-function normalizeText(text) {
-	return String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-function sumAmounts(items) {
-	return items.reduce((total, item) => total + Number(item.amount || 0), 0);
-}
-
-function sumByType(items, type) {
-	return sumAmounts(items.filter((item) => item.type === type));
-}
-
-function isPaid(transaction) {
-	return transaction.status !== 'pending';
-}
-
-function isTransfer(transaction) {
-	return transaction.type === 'transfer';
-}
-
 function getMonthTransactions(monthKey) {
-	return currentTransactions.filter((transaction) => !isTransfer(transaction) && getTransactionDate(transaction).startsWith(monthKey));
+	return currentTransactions.filter((transaction) => !isTransfer(transaction) && !transaction.adjustment && getTransactionDate(transaction).startsWith(monthKey));
 }
 
 function getMonthExpenses(monthKey) {
@@ -284,10 +318,6 @@ function createEmptyState(message) {
 	return emptyState;
 }
 
-function parseTags(value) {
-	return [...new Set(value.split(',').map((tag) => tag.trim().replace(/^#/, '').slice(0, 20)).filter(Boolean))].slice(0, 8);
-}
-
 function updateInstallmentHint() {
 	const installments = Math.floor(Number(document.querySelector('#transaction-installments').value)) || 1;
 	const amount = Number(document.querySelector('#transaction-amount').value) || 0;
@@ -298,20 +328,100 @@ function updateInstallmentHint() {
 	document.querySelector('#transaction-amount-label').textContent = isInstallment
 		? `Valor total (${installments}x de ${currencyFormatter.format(amount / installments)})`
 		: 'Valor';
+	const showSubscription = !editingTransactionId && transactionType === 'expense' && recurringInput.checked;
+	transactionForm.querySelector('[data-field="subscription"]').hidden = !showSubscription;
+	if (!showSubscription) document.querySelector('#transaction-subscription').checked = false;
+	updateInvoiceHint();
+	updateSplitHint();
+}
+
+// Date the first charge will actually have, considering "first charge next month".
+function getFirstChargeDate() {
+	const date = document.querySelector('#transaction-date').value;
+	if (!date) return '';
+	const startNextMonth = !editingTransactionId && transactionType === 'expense' && document.querySelector('#transaction-next-month').checked;
+	return startNextMonth ? dateInMonth(addMonths(date.slice(0, 7), 1), Number(date.slice(8))) : date;
+}
+
+function updateInvoiceHint() {
+	const hint = document.querySelector('#transaction-invoice-hint');
+	const card = getAccount(document.querySelector('#transaction-account').value);
+	const date = getFirstChargeDate();
+	if (transactionType !== 'expense' || card?.type !== 'credit' || !date) {
+		hint.hidden = true;
+		return;
+	}
+	const invoiceMonth = getInvoiceMonth(card, date);
+	const { closingDate, dueDate } = getInvoiceDates(card, invoiceMonth);
+	const installments = Math.floor(Number(document.querySelector('#transaction-installments').value)) || 1;
+	hint.hidden = false;
+	hint.textContent = `${installments > 1 ? 'A 1ª parcela entra' : 'Entra'} na fatura de ${formatMonthLabel(invoiceMonth).toLowerCase()} (fecha ${formatTransactionDate(closingDate)}, vence ${formatTransactionDate(dueDate)}).`
+		+ (date.slice(0, 7) !== invoiceMonth ? ' Como a fatura deste mês já fechou, a cobrança vai para a próxima.' : '');
+}
+
+function getSplitPeople() {
+	return [...new Set(document.querySelector('#transaction-split-people').value.split(',').map((name) => name.trim().slice(0, 40)).filter(Boolean))].slice(0, 10);
+}
+
+function updateSplitHint() {
+	const enabled = document.querySelector('#transaction-split').checked;
+	const hint = document.querySelector('#transaction-split-hint');
+	transactionForm.querySelector('[data-field="split-people"]').hidden = !enabled;
+	const people = getSplitPeople();
+	const amount = Number(document.querySelector('#transaction-amount').value) || 0;
+	hint.hidden = !enabled || !people.length || !amount;
+	if (!hint.hidden) {
+		hint.textContent = `Dividindo igualmente entre você e ${people.length} pessoa(s): cada um paga ${currencyFormatter.format(amount / (people.length + 1))}. Vamos registrar quanto cada pessoa te deve.`;
+	}
 }
 
 function updateTransactionFormFields() {
 	const isTransferType = transactionType === 'transfer';
-	document.querySelectorAll('.type-option').forEach((button) => {
+	const isNew = !editingTransactionId;
+	document.querySelectorAll('.type-option:not(.debt-direction)').forEach((button) => {
 		button.classList.toggle('active', button.dataset.type === transactionType);
 	});
 	transactionForm.querySelector('[data-field="category"]').hidden = isTransferType;
 	transactionForm.querySelector('[data-field="account"]').hidden = isTransferType;
 	transactionForm.querySelector('[data-field="transfer"]').hidden = !isTransferType;
 	transactionForm.querySelector('[data-field="paid"]').hidden = isTransferType;
-	transactionForm.querySelector('[data-field="new-only"]').hidden = Boolean(editingTransactionId) || isTransferType;
+	transactionForm.querySelector('[data-field="new-only"]').hidden = !isNew || isTransferType;
 	transactionForm.querySelector('[data-field="installments"]').hidden = transactionType !== 'expense';
+	transactionForm.querySelector('[data-field="next-month"]').hidden = !isNew || transactionType !== 'expense';
+	transactionForm.querySelector('[data-field="split"]').hidden = !isNew || transactionType !== 'expense';
+	if (transactionType !== 'expense') {
+		document.querySelector('#transaction-next-month').checked = false;
+		document.querySelector('#transaction-split').checked = false;
+	}
 	updateInstallmentHint();
+	updateCategorySuggestion();
+}
+
+function updateCategorySuggestion() {
+	const hint = document.querySelector('#category-suggestion-hint');
+	hint.hidden = true;
+	if (categoryTouched || editingTransactionId || transactionType === 'transfer') return;
+	const description = document.querySelector('#transaction-description').value;
+	const suggestion = suggestCategory(description, currentTransactions, getCategories().map((category) => category.name));
+	if (suggestion) {
+		document.querySelector('#transaction-category').value = suggestion;
+		hint.hidden = false;
+		hint.textContent = `Categoria sugerida automaticamente: ${suggestion}`;
+	}
+	if (transactionType === 'expense' && looksLikeSubscription(description)) {
+		const recurring = document.querySelector('#transaction-recurring');
+		if (!recurring.disabled && !recurring.dataset.touched) {
+			recurring.checked = true;
+			updateInstallmentHint();
+			document.querySelector('#transaction-subscription').checked = true;
+		}
+	}
+}
+
+function updateReceiptField() {
+	const current = document.querySelector('#transaction-receipt-current');
+	current.hidden = !editingReceipt || removeEditingReceipt;
+	if (editingReceipt) document.querySelector('#transaction-receipt-name').textContent = `📎 ${editingReceipt.name || 'Comprovante'}`;
 }
 
 function resetTransactionForm(transaction) {
@@ -338,6 +448,11 @@ function resetTransactionForm(transaction) {
 	document.querySelector('#transaction-modal-kicker').textContent = isEditing ? 'EDITAR REGISTRO' : 'NOVO REGISTRO';
 	document.querySelector('#transaction-modal-title').textContent = isEditing ? 'Editar lançamento' : 'Adicionar lançamento';
 	document.querySelector('#transaction-submit-button').textContent = isEditing ? 'Salvar alterações' : 'Adicionar lançamento';
+	categoryTouched = isEditing;
+	editingReceipt = isEditing ? transaction.receipt || null : null;
+	removeEditingReceipt = false;
+	delete document.querySelector('#transaction-recurring').dataset.touched;
+	updateReceiptField();
 	updateTransactionFormFields();
 }
 
@@ -426,7 +541,7 @@ document.querySelector('#clear-notifications-button').addEventListener('click', 
 	)));
 });
 
-document.querySelectorAll('.type-option').forEach((button) => {
+document.querySelectorAll('.type-option[data-type]').forEach((button) => {
 	button.addEventListener('click', () => {
 		transactionType = button.dataset.type;
 		updateTransactionFormFields();
@@ -435,6 +550,25 @@ document.querySelectorAll('.type-option').forEach((button) => {
 
 document.querySelector('#transaction-installments').addEventListener('input', updateInstallmentHint);
 document.querySelector('#transaction-amount').addEventListener('input', updateInstallmentHint);
+document.querySelector('#transaction-date').addEventListener('input', updateInvoiceHint);
+document.querySelector('#transaction-account').addEventListener('change', updateInvoiceHint);
+document.querySelector('#transaction-next-month').addEventListener('change', updateInvoiceHint);
+document.querySelector('#transaction-split').addEventListener('change', updateSplitHint);
+document.querySelector('#transaction-split-people').addEventListener('input', updateSplitHint);
+document.querySelector('#transaction-recurring').addEventListener('change', (event) => {
+	event.target.dataset.touched = 'true';
+	updateInstallmentHint();
+});
+document.querySelector('#transaction-description').addEventListener('input', updateCategorySuggestion);
+document.querySelector('#transaction-category').addEventListener('change', () => {
+	categoryTouched = true;
+	document.querySelector('#category-suggestion-hint').hidden = true;
+});
+document.querySelector('#transaction-receipt-view').addEventListener('click', () => viewReceipt(editingReceipt));
+document.querySelector('#transaction-receipt-remove').addEventListener('click', () => {
+	removeEditingReceipt = true;
+	updateReceiptField();
+});
 
 transactionForm.addEventListener('submit', async (event) => {
 	event.preventDefault();
@@ -474,40 +608,98 @@ transactionForm.addEventListener('submit', async (event) => {
 		: 1;
 	const isRecurring = !editingTransactionId && installments === 1 && transactionType !== 'transfer'
 		&& document.querySelector('#transaction-recurring').checked;
+	const isSubscription = isRecurring && transactionType === 'expense' && document.querySelector('#transaction-subscription').checked;
+	const startsNextMonth = !editingTransactionId && transactionType === 'expense' && document.querySelector('#transaction-next-month').checked;
+	const splitPeople = !editingTransactionId && transactionType === 'expense' && document.querySelector('#transaction-split').checked ? getSplitPeople() : [];
+	if (!editingTransactionId && transactionType === 'expense' && document.querySelector('#transaction-split').checked && !splitPeople.length) {
+		errorMessage.textContent = 'Informe com quem a despesa será dividida.';
+		return;
+	}
+	if (startsNextMonth) {
+		transactionData.transactionDate = getFirstChargeDate();
+		const isCard = getAccount(transactionData.accountId)?.type === 'credit';
+		if (!isCard && installments === 1 && transactionData.transactionDate > getToday()) transactionData.status = 'pending';
+	}
 	// Calculated before saving because the snapshot listener may already include the new transaction.
-	const budgetAlert = getBudgetAlert({ ...transactionData, amount: amount / installments }, editingTransactionId);
+	const firstAmount = amount / installments;
+	const budgetAlert = getBudgetAlert({ ...transactionData, amount: firstAmount }, editingTransactionId);
+	const unusual = alertSettings.unusual
+		? getUnusualSpending(getPlanningContext(), { ...transactionData, amount: firstAmount }, editingTransactionId)
+		: null;
 	const transactionsCollection = collection(database, 'users', auth.currentUser.uid, 'transactions');
+	const receiptsCollection = collection(database, 'users', auth.currentUser.uid, 'receipts');
+	const submitButton = document.querySelector('#transaction-submit-button');
+	const submitLabel = submitButton.textContent;
+	const receiptFile = document.querySelector('#transaction-receipt').files[0];
 	errorMessage.textContent = '';
+	submitButton.disabled = true;
+	submitButton.textContent = 'Salvando...';
 
 	try {
+		let receipt;
+		try {
+			receipt = await prepareReceipt(receiptFile);
+		} catch (error) {
+			errorMessage.textContent = error.message;
+			return;
+		}
+		const transactionReference = editingTransactionId ? doc(transactionsCollection, editingTransactionId) : doc(transactionsCollection);
+		if (receipt) {
+			const receiptReference = doc(receiptsCollection);
+			await setDoc(receiptReference, { ...receipt, transactionId: transactionReference.id, createdAt: new Date().toISOString() });
+			transactionData.receipt = { id: receiptReference.id, name: receipt.name, type: receipt.type };
+		}
+		let savedId = transactionReference.id;
 		if (editingTransactionId) {
-			await updateDoc(doc(transactionsCollection, editingTransactionId), transactionData);
+			if (editingReceipt && (removeEditingReceipt || receipt)) {
+				await deleteDoc(doc(receiptsCollection, editingReceipt.id));
+				if (!receipt) transactionData.receipt = deleteField();
+			}
+			await updateDoc(transactionReference, transactionData);
 			await addNotification(`Você editou ${description}.`, '✎');
 		} else if (installments > 1) {
-			await saveInstallments(transactionData, installments);
-			await addNotification(`Você parcelou ${description} em ${installments}x de ${currencyFormatter.format(amount / installments)}.`, '↑');
+			[savedId] = await saveInstallments(transactionData, installments);
+			if (receipt) await updateDoc(doc(receiptsCollection, transactionData.receipt.id), { transactionId: savedId });
+			await addNotification(`Você parcelou ${description} em ${installments}x de ${currencyFormatter.format(amount / installments)}${startsNextMonth ? ', começando no mês que vem' : ''}.`, '↑');
 		} else {
-			await addDoc(transactionsCollection, { ...transactionData, createdAt: new Date().toISOString() });
+			await setDoc(transactionReference, { ...transactionData, createdAt: new Date().toISOString() });
 			if (isRecurring) {
 				await addDoc(collection(database, 'users', auth.currentUser.uid, 'recurring'), {
 					description, amount, tags, notes,
 					type: transactionData.type,
 					category: transactionData.category,
 					accountId: transactionData.accountId,
-					dayOfMonth: Number(transactionDate.slice(8)),
-					lastGeneratedMonth: transactionDate.slice(0, 7),
+					dayOfMonth: Number(transactionData.transactionDate.slice(8)),
+					lastGeneratedMonth: transactionData.transactionDate.slice(0, 7),
+					subscription: isSubscription,
 					createdAt: new Date().toISOString()
 				});
 			}
 			const typeLabel = { income: 'receita', expense: 'despesa', transfer: 'transferência' }[transactionType];
 			const symbol = { income: '↓', expense: '↑', transfer: '⇄' }[transactionType];
-			await addNotification(`Você adicionou ${description} como ${typeLabel}${isRecurring ? ' fixa' : ''}.`, symbol);
+			await addNotification(`Você adicionou ${description} como ${isSubscription ? 'assinatura' : `${typeLabel}${isRecurring ? ' fixa' : ''}`}.`, symbol);
 		}
-		if (budgetAlert) await addNotification(budgetAlert, '!');
+		if (splitPeople.length) {
+			const share = roundMoney(amount / (splitPeople.length + 1));
+			const batch = writeBatch(database);
+			splitPeople.forEach((person) => batch.set(doc(collection(database, 'users', auth.currentUser.uid, 'debts')), {
+				person, description, amount: share, direction: 'receivable', settled: false,
+				transactionId: savedId, date: transactionData.transactionDate, createdAt: new Date().toISOString()
+			}));
+			await batch.commit();
+			await addNotification(`${splitPeople.join(', ')} ${splitPeople.length > 1 ? 'te devem' : 'te deve'} ${currencyFormatter.format(share)}${splitPeople.length > 1 ? ' cada' : ''} por ${description}.`, '⇆');
+		}
+		if (budgetAlert && alertSettings.budget) await raiseAlert(null, budgetAlert, '!');
+		if (unusual) {
+			await raiseAlert(null, `Gasto fora do comum: ${description} (${currencyFormatter.format(firstAmount)}) é ${unusual.ratio.toFixed(1).replace('.', ',')}x a sua média em ${transactionData.category} (${currencyFormatter.format(unusual.average)}).`, '⚠');
+		}
 		modal.close();
 	} catch (error) {
 		console.error('Erro ao salvar lançamento:', error);
 		errorMessage.textContent = 'Não foi possível salvar o lançamento. Tente novamente.';
+	} finally {
+		submitButton.disabled = false;
+		submitButton.textContent = submitLabel;
 	}
 });
 
@@ -558,7 +750,7 @@ function setAuthenticationMode(registrationMode) {
 	nameField.hidden = !registrationMode;
 	nameInput.required = registrationMode;
 	passwordInput.autocomplete = registrationMode ? 'new-password' : 'current-password';
-	document.querySelector('#auth-kicker').textContent = registrationMode ? 'COMECE AGORA' : 'BEM-VINDO DE VOLTA';
+	document.querySelector('#auth-kicker').textContent = registrationMode ? 'COMECE AGORA' : `${getGreeting().toUpperCase()} · BEM-VINDO DE VOLTA`;
 	document.querySelector('#auth-title').textContent = registrationMode ? 'Crie sua conta' : 'Entre na sua conta';
 	document.querySelector('#auth-subtitle').textContent = registrationMode ? 'Leva menos de um minuto.' : 'Acompanhe sua vida financeira.';
 	document.querySelector('#auth-submit').textContent = registrationMode ? 'Criar conta' : 'Entrar';
@@ -567,8 +759,83 @@ function setAuthenticationMode(registrationMode) {
 		? 'Já possui uma conta? <button type="button" id="auth-mode-toggle">Entrar</button>'
 		: 'Ainda não possui uma conta? <button type="button" id="auth-mode-toggle">Criar conta</button>';
 	document.querySelector('#auth-mode-toggle').addEventListener('click', () => setAuthenticationMode(!isRegistrationMode));
+	updatePasswordStrength();
 	authError.textContent = '';
 }
+
+/* ---------- Login screen helpers ---------- */
+
+function getGreeting() {
+	const hour = new Date().getHours();
+	if (hour < 5) return 'Boa madrugada';
+	if (hour < 12) return 'Bom dia';
+	if (hour < 18) return 'Boa tarde';
+	return 'Boa noite';
+}
+
+function getPasswordStrength(password) {
+	let score = 0;
+	if (password.length >= 6) score += 1;
+	if (password.length >= 10) score += 1;
+	if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
+	if (/\d/.test(password)) score += 1;
+	if (/[^A-Za-z0-9]/.test(password)) score += 1;
+	if (password.length < 6) score = Math.min(score, 1);
+	const levels = [
+		{ label: 'Muito fraca', color: 'var(--coral)' },
+		{ label: 'Fraca', color: 'var(--coral)' },
+		{ label: 'Razoável', color: '#e0a526' },
+		{ label: 'Boa', color: '#7ab648' },
+		{ label: 'Forte', color: 'var(--green)' },
+		{ label: 'Muito forte', color: 'var(--green)' }
+	];
+	return { score, ...levels[score] };
+}
+
+function updatePasswordStrength() {
+	const password = document.querySelector('#auth-password').value;
+	const meter = document.querySelector('#password-strength');
+	meter.hidden = !isRegistrationMode || !password;
+	if (meter.hidden) return;
+	const strength = getPasswordStrength(password);
+	const bar = document.querySelector('#password-strength-bar');
+	bar.style.width = `${Math.max(10, (strength.score / 5) * 100)}%`;
+	bar.style.background = strength.color;
+	document.querySelector('#password-strength-label').textContent = `Força da senha: ${strength.label}`;
+}
+
+const rememberedEmailKey = 'naverdathi-remembered-email';
+const authPasswordInput = document.querySelector('#auth-password');
+
+document.querySelector('#password-toggle').addEventListener('click', (event) => {
+	const visible = authPasswordInput.type === 'password';
+	authPasswordInput.type = visible ? 'text' : 'password';
+	event.currentTarget.textContent = visible ? 'Ocultar' : 'Mostrar';
+	event.currentTarget.setAttribute('aria-label', visible ? 'Ocultar senha' : 'Mostrar senha');
+	event.currentTarget.setAttribute('aria-pressed', String(visible));
+	authPasswordInput.focus();
+});
+
+authPasswordInput.addEventListener('input', updatePasswordStrength);
+['keydown', 'keyup'].forEach((type) => authPasswordInput.addEventListener(type, (event) => {
+	if (typeof event.getModifierState === 'function') {
+		document.querySelector('#caps-warning').hidden = !event.getModifierState('CapsLock');
+	}
+}));
+authPasswordInput.addEventListener('blur', () => { document.querySelector('#caps-warning').hidden = true; });
+
+function rememberEmailPreference(email) {
+	if (document.querySelector('#remember-email').checked && email) localStorage.setItem(rememberedEmailKey, email);
+	else localStorage.removeItem(rememberedEmailKey);
+}
+
+(function restoreRememberedEmail() {
+	const email = localStorage.getItem(rememberedEmailKey);
+	document.querySelector('#auth-kicker').textContent = `${getGreeting().toUpperCase()} · BEM-VINDO DE VOLTA`;
+	if (!email) return;
+	document.querySelector('#auth-email').value = email;
+	document.querySelector('#remember-email').checked = true;
+}());
 
 document.querySelector('#forgot-password-button').addEventListener('click', async () => {
 	const email = document.querySelector('#auth-email').value.trim();
@@ -752,19 +1019,6 @@ function updateUserInterface(user) {
 	document.querySelector('#page-title').textContent = `Olá, ${displayName}.`;
 }
 
-function formatTransactionDate(isoDate) {
-	if (!isoDate) return 'Agora';
-	// Plain YYYY-MM-DD strings are parsed as UTC, which would shift the day in Brazil.
-	const date = isoDate.length === 10 ? new Date(`${isoDate}T12:00:00`) : new Date(isoDate);
-	return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' })
-		.format(date)
-		.replace('.', '');
-}
-
-function getTransactionDate(transaction) {
-	return transaction.transactionDate || transaction.createdAt?.slice(0, 10) || '';
-}
-
 function updateMonthFilter(transactions) {
 	const selectedMonth = transactionMonthFilter.value;
 	const months = [...new Set(transactions.map(getTransactionDate).filter(Boolean).map((date) => date.slice(0, 7)))].sort().reverse();
@@ -790,7 +1044,7 @@ function createTransactionElement(transaction) {
 	const actions = document.createElement('div');
 	const metadataParts = [
 		isTransferItem
-			? `${getAccount(transaction.fromAccountId)?.name || 'Conta removida'} → ${getAccount(transaction.toAccountId)?.name || 'Conta removida'}`
+			? `${transaction.fromAccountId ? getAccount(transaction.fromAccountId)?.name || 'Conta removida' : 'Sem conta'} → ${getAccount(transaction.toAccountId)?.name || 'Conta removida'}`
 			: transaction.category,
 		formatTransactionDate(getTransactionDate(transaction))
 	];
@@ -836,13 +1090,15 @@ function createTransactionElement(transaction) {
 	value.className = `transaction-value ${isTransferItem ? 'transfer-value' : isIncome ? 'income-value' : 'expense-value'}`;
 	value.textContent = `${isTransferItem ? '⇄' : isIncome ? '+' : '-'} ${currencyFormatter.format(transaction.amount)}`;
 	actions.className = 'item-actions';
+	if (transaction.receipt?.id) actions.append(createActionButton('📎', 'Ver comprovante', () => viewReceipt(transaction.receipt)));
 	actions.append(
 		createActionButton('⧉', 'Duplicar lançamento', () => {
 			resetTransactionForm({
 				...transaction,
 				id: undefined,
+				receipt: undefined,
 				transactionDate: getToday(),
-				description: transaction.description.replace(/ \(\d+\/\d+\)$/, '')
+				description: stripInstallmentSuffix(transaction.description)
 			});
 			modal.showModal();
 		}),
@@ -850,13 +1106,14 @@ function createTransactionElement(transaction) {
 			resetTransactionForm(transaction);
 			modal.showModal();
 		}),
-		createActionButton('×', 'Excluir lançamento', () => openDeleteConfirmation(
-			`Você deseja excluir o lançamento "${transaction.description}"? Essa ação não pode ser desfeita.`,
-			async () => {
-				await deleteDoc(doc(database, 'users', auth.currentUser.uid, 'transactions', transaction.id));
+		createActionButton('×', 'Excluir lançamento', () => deleteWithUndo({
+			label: `Lançamento "${transaction.description}" excluído.`,
+			items: [{ path: ['transactions', transaction.id], data: transaction }],
+			onFinalize: async () => {
+				if (transaction.receipt?.id) await deleteDoc(doc(database, 'users', auth.currentUser.uid, 'receipts', transaction.receipt.id));
 				await addNotification(`Você excluiu ${transaction.description}.`, '×');
 			}
-		), true)
+		}), true)
 	);
 	row.append(icon, details, value, actions);
 	return row;
@@ -904,13 +1161,11 @@ function createGoalElement(goal) {
 	actions.append(
 		createActionButton('+', 'Guardar dinheiro', () => openContribution(goal)),
 		createActionButton('✎', 'Editar meta', () => { resetGoalForm(goal); goalModal.showModal(); }),
-		createActionButton('×', 'Excluir meta', () => openDeleteConfirmation(
-			`Você deseja excluir a meta "${goal.title}"? Essa ação não pode ser desfeita.`,
-			async () => {
-				await deleteDoc(doc(database, 'users', auth.currentUser.uid, 'goals', goal.id));
-				await addNotification(`Você excluiu a meta ${goal.title}.`, '×');
-			}
-		), true)
+		createActionButton('×', 'Excluir meta', () => deleteWithUndo({
+			label: `Meta "${goal.title}" excluída.`,
+			items: [{ path: ['goals', goal.id], data: goal }],
+			onFinalize: () => addNotification(`Você excluiu a meta ${goal.title}.`, '×')
+		}), true)
 	);
 	row.append(identity, progress, percentageLabel, actions);
 	return row;
@@ -990,13 +1245,11 @@ function createInvestmentElement(investment) {
 	deleteButton.title = 'Excluir aporte';
 	deleteButton.setAttribute('aria-label', 'Excluir aporte');
 	deleteButton.textContent = '×';
-	deleteButton.addEventListener('click', () => openDeleteConfirmation(
-		`Você deseja excluir o aporte em "${investment.name}"? O valor voltará ao seu saldo disponível.`,
-		async () => {
-			await deleteDoc(doc(database, 'users', auth.currentUser.uid, 'investments', investment.id));
-			await addNotification(`Você excluiu o aporte em ${investment.name}.`, '×');
-		}
-	));
+	deleteButton.addEventListener('click', () => deleteWithUndo({
+		label: `Aporte em "${investment.name}" excluído. O valor voltou ao seu saldo.`,
+		items: [{ path: ['investments', investment.id], data: investment }],
+		onFinalize: () => addNotification(`Você excluiu o aporte em ${investment.name}.`, '×')
+	}));
 	actions.append(deleteButton);
 	item.append(identity, value, actions);
 	return item;
@@ -1061,7 +1314,7 @@ function renderFinancialVisuals(transactions) {
 		.reduce((total, transaction) => total + transaction.amount, 0);
 	const monthlyInvestmentTotal = monthlyInvestments.reduce((total, investment) => total + investment.amount, 0);
 	const budgetSpent = monthlyExpenses + monthlyInvestmentTotal;
-	const budgetLimit = monthlyIncome;
+	const budgetLimit = getMonthIncome(getPlanningContext(), currentMonth);
 	const budgetPercentage = budgetLimit ? Math.min(100, Math.round((budgetSpent / budgetLimit) * 100)) : 0;
 	const budgetRing = document.querySelector('#budget-ring');
 
@@ -1075,18 +1328,30 @@ function renderFinancialVisuals(transactions) {
 function renderDashboard(transactions) {
 	currentTransactions = transactions;
 	const today = getToday();
-	// Balance only counts paid, non-future movements; transfers just move money between accounts.
-	const settled = transactions.filter((transaction) => !isTransfer(transaction) && isPaid(transaction) && getTransactionDate(transaction) <= today);
 	const monthTransactions = getMonthTransactions(getCurrentMonth());
-	const balance = monthlyIncome + sumByType(settled, 'income') - sumByType(settled, 'expense') - sumAmounts(investments);
-	const pendingTotal = sumAmounts(transactions.filter((transaction) => transaction.type === 'expense' && !isPaid(transaction)));
+	// Monthly income is only a planning reference: the balance comes from what was actually received and paid.
+	const balance = getAvailableBalance({ accounts, transactions, investments, today });
+	currentBalance = balance.total;
+	const pendingTotal = sumAmounts(transactions.filter((transaction) => transaction.type === 'expense' && !isPaid(transaction)
+		&& getAccount(transaction.accountId)?.type !== 'credit'));
+	const openInvoices = accounts.filter((account) => account.type === 'credit')
+		.reduce((total, card) => total + getPendingInvoices(card, transactions, today, 3).reduce((sum, invoice) => sum + invoice.remaining, 0)
+			+ getCardSummary(card, transactions, today).currentInvoice.remaining, 0);
+	const receivedThisMonth = sumAmounts(monthTransactions.filter((transaction) => isRealIncome(transaction, accounts)));
 
-	setMoney(document.querySelector('#balance-amount'), balance);
-	setMoney(document.querySelector('#income-amount'), monthlyIncome + sumByType(monthTransactions, 'income'));
+	setMoney(document.querySelector('#balance-amount'), balance.total);
+	document.querySelector('#balance-amount').classList.toggle('is-negative', balance.total < 0);
+	setMoney(document.querySelector('#income-amount'), receivedThisMonth);
 	setMoney(document.querySelector('#expense-amount'), sumByType(monthTransactions, 'expense'));
-	document.querySelector('#balance-description').textContent = monthlyIncome
-		? `Renda mensal: ${currencyFormatter.format(monthlyIncome)}${pendingTotal ? ` · A pagar: ${currencyFormatter.format(pendingTotal)}` : ''}`
-		: 'Adicione sua renda mensal';
+	document.querySelector('#income-description').textContent = monthlyIncome
+		? `recebidas · renda mensal informada: ${currencyFormatter.format(monthlyIncome)}`
+		: 'receitas registradas';
+	document.querySelector('#balance-description').textContent = [
+		pendingTotal ? `A pagar: ${currencyFormatter.format(pendingTotal)}` : '',
+		openInvoices ? `Faturas em aberto: ${currencyFormatter.format(openInvoices)}` : '',
+		balance.invested ? `Investido: ${currencyFormatter.format(balance.invested)}` : ''
+	].filter(Boolean).join(' · ') || 'Dinheiro que você tem hoje';
+	updateSalaryHint();
 	renderFinancialVisuals(transactions);
 	updateMonthFilter(transactions);
 	renderCategoryChart();
@@ -1096,6 +1361,11 @@ function renderDashboard(transactions) {
 	renderAccounts();
 	renderIndicators();
 	renderTransactionList();
+	renderPlanning();
+	renderCalendar();
+	renderDebts();
+	if (invoiceModal.open) renderInvoice();
+	scheduleAlertCheck();
 }
 
 function getFilteredTransactions() {
@@ -1142,6 +1412,11 @@ async function loadFinancialProfile(user) {
 		profilePhotoData = profileSnapshot.data()?.profilePhoto || '';
 		categoryBudgets = profileSnapshot.data()?.categoryBudgets || {};
 		customCategories = (profileSnapshot.data()?.customCategories || []).filter((category) => category?.name);
+		alertSettings = { ...defaultAlertSettings, ...(profileSnapshot.data()?.alertSettings || {}) };
+		sentAlerts = profileSnapshot.data()?.sentAlerts || {};
+		categoryGroups = profileSnapshot.data()?.categoryGroups || {};
+		pruneSentAlerts();
+		if (alertSettings.push) registerPeriodicCheck();
 		refreshCategorySelects();
 		updateUserInterface(user);
 		if (!monthlyIncome && !salaryModal.open) salaryModal.showModal();
@@ -1150,6 +1425,7 @@ async function loadFinancialProfile(user) {
 			orderBy('createdAt', 'asc')
 		), (snapshot) => {
 			accounts = snapshot.docs.map((account) => ({ id: account.id, ...account.data() }));
+			loadedCollections.add('accounts');
 			populateAccountSelects();
 			renderDashboard(currentTransactions);
 		});
@@ -1159,6 +1435,7 @@ async function loadFinancialProfile(user) {
 		);
 		stopTransactionListener = onSnapshot(transactionsQuery, (snapshot) => {
 			const transactions = snapshot.docs.map((transaction) => ({ id: transaction.id, ...transaction.data() }));
+			loadedCollections.add('transactions');
 			renderDashboard(transactions);
 			notifyDueBills(transactions);
 		});
@@ -1167,15 +1444,27 @@ async function loadFinancialProfile(user) {
 			orderBy('createdAt', 'desc')
 		), (snapshot) => {
 			recurringItems = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+			loadedCollections.add('recurring');
 			renderRecurring();
+			updateSalaryHint();
+			renderPlanning();
+			renderCalendar();
 			generateRecurringTransactions();
 		});
+		stopDebtListener = onSnapshot(query(
+			collection(database, 'users', user.uid, 'debts'),
+			orderBy('createdAt', 'desc')
+		), (snapshot) => {
+			debts = snapshot.docs.map((debt) => ({ id: debt.id, ...debt.data() }));
+			renderDebts();
+		}, (error) => console.error('Erro ao carregar divisões de gastos:', error));
 		const investmentsQuery = query(
 			collection(database, 'users', user.uid, 'investments'),
 			orderBy('createdAt', 'desc')
 		);
 		stopInvestmentListener = onSnapshot(investmentsQuery, (snapshot) => {
 			investments = snapshot.docs.map((investment) => ({ id: investment.id, ...investment.data() }));
+			loadedCollections.add('investments');
 			renderInvestments();
 		});
 		const goalsQuery = query(
@@ -1184,7 +1473,9 @@ async function loadFinancialProfile(user) {
 		);
 		stopGoalListener = onSnapshot(goalsQuery, (snapshot) => {
 			const goals = snapshot.docs.map((goal) => ({ id: goal.id, ...goal.data() }));
+			loadedCollections.add('goals');
 			renderGoals(goals);
+			scheduleAlertCheck();
 		});
 		const notificationsQuery = query(
 			collection(database, 'users', user.uid, 'notifications'),
@@ -1212,6 +1503,9 @@ salaryForm.addEventListener('submit', async (event) => {
 	try {
 		await setDoc(doc(database, 'users', auth.currentUser.uid), { monthlyIncome: amount }, { merge: true });
 		monthlyIncome = amount;
+		if (document.querySelector('#salary-recurring').checked) {
+			await createSalaryIncome(amount, clampDay(document.querySelector('#salary-day').value, 5));
+		}
 		await addNotification(`Você cadastrou sua renda mensal de ${currencyFormatter.format(amount)}.`, '↓');
 		salaryModal.close();
 	} catch (error) {
@@ -1220,6 +1514,112 @@ salaryForm.addEventListener('submit', async (event) => {
 	} finally {
 		submitButton.disabled = false;
 		submitButton.textContent = 'Começar a organizar';
+	}
+});
+
+document.querySelector('#salary-recurring').addEventListener('change', (event) => {
+	salaryForm.querySelector('[data-salary-day]').hidden = !event.target.checked;
+});
+
+// Creates this month's salary as an income (to receive if the day has not come yet) and repeats it monthly.
+async function createSalaryIncome(amount, day) {
+	const month = getCurrentMonth();
+	const transactionDate = dateInMonth(month, day);
+	const base = {
+		description: 'Salário', amount, type: 'income', category: 'Trabalho', accountId: '', tags: [], notes: ''
+	};
+	const reference = await addDoc(collection(database, 'users', auth.currentUser.uid, 'recurring'), {
+		...base, dayOfMonth: day, lastGeneratedMonth: month, createdAt: new Date().toISOString()
+	});
+	await addDoc(collection(database, 'users', auth.currentUser.uid, 'transactions'), {
+		...base, transactionDate, status: transactionDate <= getToday() ? 'paid' : 'pending',
+		recurringId: reference.id, createdAt: new Date().toISOString()
+	});
+}
+
+function updateSalaryHint() {
+	const hint = document.querySelector('#salary-hint');
+	const button = document.querySelector('#register-salary-button');
+	const hasRecurringIncome = recurringItems.some((item) => item.type === 'income');
+	const hasIncomeThisMonth = getMonthTransactions(getCurrentMonth()).some((item) => isRealIncome(item, accounts));
+	const show = loadedCollections.has('recurring') && Boolean(monthlyIncome) && !hasRecurringIncome && !hasIncomeThisMonth;
+	hint.hidden = !show;
+	button.hidden = !show;
+	if (show) hint.textContent = 'Sua renda mensal não entra sozinha no saldo. Lance o salário quando ele cair (ou deixe automático).';
+}
+
+document.querySelector('#register-salary-button').addEventListener('click', () => {
+	resetTransactionForm({ type: 'income', description: 'Salário', amount: monthlyIncome, category: 'Trabalho', transactionDate: getToday() });
+	const recurring = document.querySelector('#transaction-recurring');
+	recurring.checked = true;
+	recurring.dataset.touched = 'true';
+	modal.showModal();
+});
+
+const adjustBalanceModal = document.querySelector('#adjust-balance-modal');
+const adjustBalanceForm = document.querySelector('#adjust-balance-form');
+
+function getAdjustmentTarget() {
+	const accountId = document.querySelector('#adjust-balance-account').value;
+	const account = getAccount(accountId);
+	return account
+		? { accountId, current: getAccountBalance(account), label: account.name }
+		: { accountId: '', current: currentBalance, label: 'saldo disponível' };
+}
+
+function updateAdjustmentPreview() {
+	const preview = document.querySelector('#adjust-balance-preview');
+	const value = document.querySelector('#adjust-balance-amount').value;
+	const target = getAdjustmentTarget();
+	if (value === '') {
+		preview.textContent = `Hoje o site mostra ${currencyFormatter.format(target.current)} em ${target.label}.`;
+		return;
+	}
+	const difference = roundMoney(Number(value) - target.current);
+	preview.textContent = difference
+		? `O site mostra ${currencyFormatter.format(target.current)}. Vamos lançar um ajuste de ${difference > 0 ? '+' : '−'}${currencyFormatter.format(Math.abs(difference))}.`
+		: 'O saldo já está correto. Nada a ajustar.';
+}
+
+document.querySelector('#adjust-balance-button').addEventListener('click', () => {
+	adjustBalanceForm.reset();
+	const select = document.querySelector('#adjust-balance-account');
+	select.replaceChildren(new Option('Saldo total (todas as contas)', ''));
+	accounts.filter((account) => account.type !== 'credit').forEach((account) => select.add(new Option(account.name, account.id)));
+	updateAdjustmentPreview();
+	adjustBalanceModal.showModal();
+});
+document.querySelector('#adjust-balance-amount').addEventListener('input', updateAdjustmentPreview);
+document.querySelector('#adjust-balance-account').addEventListener('change', updateAdjustmentPreview);
+
+adjustBalanceForm.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const value = Number(document.querySelector('#adjust-balance-amount').value);
+	if (!Number.isFinite(value)) return;
+	const target = getAdjustmentTarget();
+	const difference = roundMoney(value - target.current);
+	if (!difference) {
+		adjustBalanceModal.close();
+		return;
+	}
+	try {
+		await addDoc(collection(database, 'users', auth.currentUser.uid, 'transactions'), {
+			description: 'Ajuste de saldo',
+			amount: Math.abs(difference),
+			type: difference > 0 ? 'income' : 'expense',
+			category: 'Outros',
+			accountId: target.accountId,
+			tags: ['ajuste'],
+			notes: `Saldo corrigido para ${currencyFormatter.format(value)}.`,
+			transactionDate: getToday(),
+			status: 'paid',
+			adjustment: true,
+			createdAt: new Date().toISOString()
+		});
+		await addNotification(`Você ajustou ${target.label} para ${currencyFormatter.format(value)}.`, '⚖');
+		adjustBalanceModal.close();
+	} catch (error) {
+		console.error('Erro ao ajustar saldo:', error);
 	}
 });
 
@@ -1292,6 +1692,7 @@ authForm.addEventListener('submit', async (event) => {
 	authError.textContent = '';
 	submitButton.disabled = true;
 	submitButton.textContent = 'Aguarde...';
+	rememberEmailPreference(email);
 
 	try {
 		if (isRegistrationMode) {
@@ -1324,7 +1725,14 @@ document.querySelector('#google-login-button').addEventListener('click', async (
 	}
 });
 
-document.querySelector('#logout-button').addEventListener('click', () => signOut(auth));
+document.querySelector('#logout-button').addEventListener('click', async () => {
+	try {
+		await flushToast();
+	} catch (error) {
+		console.error('Erro ao finalizar ação pendente:', error);
+	}
+	signOut(auth);
+});
 
 onAuthStateChanged(auth, async (user) => {
 	const isAuthenticated = Boolean(user);
@@ -1343,6 +1751,15 @@ onAuthStateChanged(auth, async (user) => {
 	if (stopInvestmentListener) stopInvestmentListener();
 	if (stopAccountListener) stopAccountListener();
 	if (stopRecurringListener) stopRecurringListener();
+	if (stopDebtListener) stopDebtListener();
+	clearTimeout(alertTimer);
+	clearScheduledAlerts();
+	debts = [];
+	alertSettings = { ...defaultAlertSettings };
+	sentAlerts = {};
+	categoryGroups = {};
+	loadedCollections.clear();
+	hideToast();
 	notifications = [];
 	investments = [];
 	currentTransactions = [];
@@ -1389,10 +1806,15 @@ async function saveInstallments(transactionData, count) {
 	const day = Number(transactionData.transactionDate.slice(8));
 	const isCreditCard = getAccount(transactionData.accountId)?.type === 'credit';
 	const createdAt = Date.now();
+	const ids = [];
 	for (let index = 0; index < count; index += 1) {
 		const transactionDate = dateInMonth(addMonths(firstMonth, index), day);
-		batch.set(doc(transactionsCollection), {
+		const reference = doc(transactionsCollection);
+		ids.push(reference.id);
+		batch.set(reference, {
 			...transactionData,
+			// Only the first installment keeps the receipt so it is not referenced (and deleted) multiple times.
+			receipt: index === 0 ? transactionData.receipt || null : null,
 			description: `${transactionData.description} (${index + 1}/${count})`,
 			amount: (baseCents + (index === 0 ? totalCents - baseCents * count : 0)) / 100,
 			transactionDate,
@@ -1403,6 +1825,7 @@ async function saveInstallments(transactionData, count) {
 		});
 	}
 	await batch.commit();
+	return ids;
 }
 
 async function generateRecurringTransactions() {
@@ -1447,11 +1870,13 @@ async function generateRecurringTransactions() {
 }
 
 async function notifyDueBills(transactions) {
+	if (!alertSettings.bills) return;
 	const today = getToday();
+	const warningDays = Number(alertSettings.billDays) || 0;
 	for (const transaction of transactions) {
 		if (transaction.type !== 'expense' || isPaid(transaction)) continue;
 		const days = daysBetween(today, getTransactionDate(transaction));
-		const level = days < 0 ? 'overdue' : days <= 3 ? 'soon' : '';
+		const level = days < 0 ? 'overdue' : days <= warningDays ? 'soon' : '';
 		const key = `${transaction.id}:${level}`;
 		if (!level || transaction.dueNotified === level || notifiedBills.has(key)) continue;
 		notifiedBills.add(key);
@@ -1540,13 +1965,12 @@ function renderCategoryBudgets() {
 function renderHistory() {
 	const chart = document.querySelector('#history-chart');
 	const currentMonth = getCurrentMonth();
-	const firstMonth = currentTransactions.map(getTransactionDate).filter(Boolean).sort()[0]?.slice(0, 7) || currentMonth;
 	const months = Array.from({ length: 6 }, (_, index) => addMonths(currentMonth, index - 5));
 	const data = months.map((month) => {
 		const monthTransactions = getMonthTransactions(month);
 		return {
 			month,
-			income: (month >= firstMonth ? monthlyIncome : 0) + sumByType(monthTransactions, 'income'),
+			income: sumAmounts(monthTransactions.filter((transaction) => isRealIncome(transaction, accounts))),
 			expense: sumByType(monthTransactions, 'expense') + sumAmounts(getInvestmentsInMonth(month))
 		};
 	});
@@ -1579,17 +2003,21 @@ function renderIndicators() {
 	const monthTransactions = getMonthTransactions(month);
 	const monthExpenses = monthTransactions.filter((transaction) => transaction.type === 'expense');
 	const spentSoFar = sumAmounts(monthExpenses.filter((transaction) => getTransactionDate(transaction) <= today));
-	const scheduled = sumAmounts(monthExpenses.filter((transaction) => getTransactionDate(transaction) > today));
-	const monthIncome = monthlyIncome + sumByType(monthTransactions, 'income');
-	const monthInvestments = sumAmounts(getInvestmentsInMonth(month));
-	const projectedExpenses = Math.max(spentSoFar + scheduled, (spentSoFar / day) * getDaysInMonth(month));
-	const forecast = monthIncome - projectedExpenses - monthInvestments;
+	const outlook = getEndOfMonthForecast(getPlanningContext(), currentBalance);
+	const forecast = outlook.forecast;
+	lastForecastValue = forecast;
 	const forecastElement = document.querySelector('#forecast-amount');
 	setMoney(forecastElement, forecast);
 	forecastElement.classList.toggle('is-negative', forecast < 0);
 	forecastElement.classList.toggle('is-positive', forecast >= 0);
-	document.querySelector('#forecast-description').textContent = monthIncome || spentSoFar
-		? `No ritmo atual (${currencyFormatter.format(spentSoFar / day)} por dia), contando contas já agendadas.`
+	document.querySelector('#forecast-description').textContent = currentTransactions.length
+		? [
+			'Saldo de hoje',
+			outlook.pendingIncome ? `+ ${currencyFormatter.format(outlook.pendingIncome)} a receber` : '',
+			outlook.pendingExpenses ? `− ${currencyFormatter.format(outlook.pendingExpenses)} em contas` : '',
+			outlook.invoicesDue ? `− ${currencyFormatter.format(outlook.invoicesDue)} em faturas` : '',
+			outlook.paceRest ? `− ~${currencyFormatter.format(outlook.paceRest)} no ritmo atual (${currencyFormatter.format(outlook.dailyPace)}/dia)` : ''
+		].filter(Boolean).join(' ') + '.'
 		: 'Registre lançamentos para ver a previsão.';
 
 	const previousMonth = addMonths(month, -1);
@@ -1661,7 +2089,7 @@ function renderInsights() {
 	const fourteenDaysAgo = toDateKey(new Date(Date.now() - 14 * 86400000));
 	const expenseBetween = (start, end) => sumAmounts(currentTransactions.filter((transaction) => {
 		const date = getTransactionDate(transaction);
-		return transaction.type === 'expense' && date > start && date <= end;
+		return transaction.type === 'expense' && !transaction.adjustment && date > start && date <= end;
 	}));
 	const lastWeek = expenseBetween(sevenDaysAgo, today);
 	const weekBefore = expenseBetween(fourteenDaysAgo, sevenDaysAgo);
@@ -1669,7 +2097,7 @@ function renderInsights() {
 		insights.push(`Nos últimos 7 dias você gastou ${currencyFormatter.format(lastWeek)}, ${lastWeek > weekBefore ? 'mais' : 'menos'} que nos 7 dias anteriores (${currencyFormatter.format(weekBefore)}).`);
 	}
 
-	const monthIncome = monthlyIncome + sumByType(getMonthTransactions(month), 'income');
+	const monthIncome = getMonthIncome(getPlanningContext(), month);
 	if (monthIncome) {
 		const saved = monthIncome - sumAmounts(expenses) - sumAmounts(getInvestmentsInMonth(month));
 		const rate = Math.round((saved / monthIncome) * 100);
@@ -1742,6 +2170,7 @@ function renderRecurring() {
 	list.replaceChildren();
 	if (!recurringItems.length) {
 		list.append(createEmptyState('Marque "Repetir todo mês" ao lançar aluguel, assinaturas ou salário para criá-los automaticamente.'));
+		renderSubscriptions();
 		return;
 	}
 	recurringItems.forEach((item) => {
@@ -1752,53 +2181,34 @@ function renderRecurring() {
 		const value = document.createElement('strong');
 		row.className = 'recurring-item';
 		title.textContent = item.description;
-		details.textContent = `${item.category} · todo dia ${item.dayOfMonth}`;
+		details.textContent = `${item.category} · todo dia ${item.dayOfMonth}${item.subscription ? ' · assinatura' : ''}`;
 		value.className = `bill-value ${item.type === 'income' ? 'income-value' : 'expense-value'}`;
 		value.textContent = `${item.type === 'income' ? '+' : '-'} ${currencyFormatter.format(item.amount)}`;
 		info.append(title, details);
-		row.append(info, value, createActionButton('×', 'Parar de repetir', () => openDeleteConfirmation(
-			`Parar de repetir "${item.description}"? Os lançamentos já criados serão mantidos.`,
-			async () => {
-				await deleteDoc(doc(database, 'users', auth.currentUser.uid, 'recurring', item.id));
-				await addNotification(`${item.description} não será mais lançado automaticamente.`, '×');
-			}
-		), true));
+		const actions = document.createElement('div');
+		actions.className = 'item-actions';
+		if (item.type === 'expense') {
+			actions.append(createActionButton(item.subscription ? '★' : '☆', item.subscription ? 'Deixar de tratar como assinatura' : 'Marcar como assinatura', async () => {
+				await updateDoc(doc(database, 'users', auth.currentUser.uid, 'recurring', item.id), { subscription: !item.subscription });
+			}));
+		}
+		actions.append(createRecurringDeleteButton(item, 'Parar de repetir'));
+		row.append(info, value, actions);
 		list.append(row);
 	});
+	renderSubscriptions();
+}
+
+function createRecurringDeleteButton(item, label) {
+	return createActionButton('×', label, () => deleteWithUndo({
+		label: `"${item.description}" não será mais lançado automaticamente.`,
+		items: [{ path: ['recurring', item.id], data: item }],
+		onFinalize: () => addNotification(`${item.description} não será mais lançado automaticamente.`, '×')
+	}), true);
 }
 
 function getAccountBalance(account) {
-	const today = getToday();
-	return currentTransactions.reduce((balance, transaction) => {
-		if (getTransactionDate(transaction) > today || !isPaid(transaction)) return balance;
-		if (isTransfer(transaction)) {
-			if (transaction.toAccountId === account.id) return balance + transaction.amount;
-			if (transaction.fromAccountId === account.id) return balance - transaction.amount;
-			return balance;
-		}
-		if (transaction.accountId !== account.id) return balance;
-		return balance + (transaction.type === 'income' ? transaction.amount : -transaction.amount);
-	}, Number(account.initialBalance) || 0);
-}
-
-function getCardSummary(account) {
-	const today = getToday();
-	const closingDay = Number(account.closingDay) || 1;
-	const dueDay = Number(account.dueDay) || 10;
-	const currentMonth = getCurrentMonth();
-	const closingMonth = Number(today.slice(8)) > closingDay ? addMonths(currentMonth, 1) : currentMonth;
-	const cycleEnd = dateInMonth(closingMonth, closingDay);
-	const cycleStart = dateInMonth(addMonths(closingMonth, -1), closingDay);
-	const dueDate = dateInMonth(dueDay > closingDay ? closingMonth : addMonths(closingMonth, 1), dueDay);
-	const cardExpenses = currentTransactions.filter((transaction) => transaction.type === 'expense' && transaction.accountId === account.id);
-	const payments = sumAmounts(currentTransactions.filter((transaction) => isTransfer(transaction) && transaction.toAccountId === account.id));
-	const invoice = sumAmounts(cardExpenses.filter((transaction) => {
-		const date = getTransactionDate(transaction);
-		return date > cycleStart && date <= cycleEnd;
-	}));
-	const used = Math.max(0, sumAmounts(cardExpenses) - payments);
-	const limit = Number(account.limit) || 0;
-	return { invoice, dueDate, used, limit, available: limit - used };
+	return computeAccountBalance(account, currentTransactions, getToday());
 }
 
 function renderAccounts() {
@@ -1836,17 +2246,37 @@ function renderAccounts() {
 		value.className = 'account-balance';
 		card.append(header);
 		if (account.type === 'credit') {
-			const summary = getCardSummary(account);
+			const summary = getCardSummary(account, currentTransactions, getToday());
 			const bar = document.createElement('i');
 			const fill = document.createElement('b');
 			const detail = document.createElement('small');
+			const status = document.createElement('span');
+			const pending = getPendingInvoices(account, currentTransactions, getToday(), 3);
 			label.textContent = 'Fatura atual';
-			setMoney(value, summary.invoice);
+			status.className = `invoice-status ${summary.currentInvoice.status}`;
+			status.textContent = invoiceStatusLabels[summary.currentInvoice.status];
+			label.append(' ', status);
+			setMoney(value, summary.currentInvoice.remaining);
 			bar.className = 'mini-progress';
 			fill.style.width = `${summary.limit ? Math.min(100, (summary.used / summary.limit) * 100) : 0}%`;
+			if (summary.percent >= 90) fill.style.background = 'var(--coral)';
+			else if (summary.percent >= 70) fill.style.background = 'var(--yellow)';
 			bar.append(fill);
-			detail.textContent = `Vence em ${formatTransactionDate(summary.dueDate)} · Limite disponível: ${currencyFormatter.format(summary.available)}`;
+			const paidNote = summary.currentInvoice.paid ? `Total ${currencyFormatter.format(summary.invoice)}, já pago ${currencyFormatter.format(summary.currentInvoice.paid)} · ` : '';
+			detail.textContent = `${paidNote}Fecha em ${formatTransactionDate(summary.currentInvoice.closingDate)} · vence em ${formatTransactionDate(summary.dueDate)} · Limite usado ${currencyFormatter.format(summary.used)} · disponível ${currencyFormatter.format(summary.available)}`;
 			card.append(label, value, bar, detail);
+			pending.forEach((invoice) => {
+				const warning = document.createElement('small');
+				warning.className = `invoice-warning ${invoice.status}`;
+				warning.textContent = `Fatura de ${formatMonthLabel(invoice.month).toLowerCase()} ${invoice.status === 'overdue' ? 'atrasada' : 'fechada'}: ${currencyFormatter.format(invoice.remaining)} a pagar até ${formatTransactionDate(invoice.dueDate)}`;
+				card.append(warning);
+			});
+			const openButton = document.createElement('button');
+			openButton.type = 'button';
+			openButton.className = 'pay-button invoice-open-button';
+			openButton.textContent = pending.length ? 'Ver e pagar fatura' : 'Ver fatura';
+			openButton.addEventListener('click', () => openInvoiceModal(account, pending[0]?.month));
+			card.append(openButton);
 		} else {
 			label.textContent = 'Saldo atual';
 			setMoney(value, getAccountBalance(account));
@@ -1854,6 +2284,20 @@ function renderAccounts() {
 		}
 		grid.append(card);
 	});
+	const loose = getAvailableBalance({ accounts, transactions: currentTransactions, investments, today: getToday() }).loose;
+	if (loose) {
+		const card = document.createElement('article');
+		const name = document.createElement('strong');
+		const type = document.createElement('small');
+		const value = document.createElement('strong');
+		card.className = 'account-card loose';
+		name.textContent = 'Sem conta definida';
+		type.textContent = 'Lançamentos feitos sem escolher uma conta';
+		value.className = 'account-balance';
+		setMoney(value, loose);
+		card.append(name, type, value);
+		grid.append(card);
+	}
 }
 
 function updateAccountFormFields() {
@@ -1875,10 +2319,6 @@ function openAccountModal(account) {
 	document.querySelector('#account-modal-title').textContent = account ? 'Atualizar conta' : 'Adicionar conta';
 	updateAccountFormFields();
 	accountModal.showModal();
-}
-
-function clampDay(value, fallback) {
-	return Math.min(31, Math.max(1, Math.floor(Number(value)) || fallback));
 }
 
 function getGoalPlan(goal) {
@@ -1940,13 +2380,6 @@ function prefillSimulator() {
 	renderSimulator();
 }
 
-function escapeCsvText(value) {
-	let text = String(value ?? '');
-	// Prevents spreadsheet formula injection when the file is opened in Excel.
-	if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-	return `"${text.replace(/"/g, '""')}"`;
-}
-
 function exportTransactionsCsv() {
 	const rows = getFilteredTransactions();
 	if (!rows.length) return;
@@ -1971,92 +2404,6 @@ function exportTransactionsCsv() {
 	link.download = `lancamentos-${getToday()}.csv`;
 	link.click();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function splitCsvLine(line, separator) {
-	const cells = [];
-	let cell = '';
-	let quoted = false;
-	for (let index = 0; index < line.length; index += 1) {
-		const character = line[index];
-		if (character === '"') {
-			if (quoted && line[index + 1] === '"') {
-				cell += '"';
-				index += 1;
-			} else {
-				quoted = !quoted;
-			}
-		} else if (character === separator && !quoted) {
-			cells.push(cell.trim());
-			cell = '';
-		} else {
-			cell += character;
-		}
-	}
-	cells.push(cell.trim());
-	return cells;
-}
-
-function parseImportDate(value) {
-	const brazilianDate = value.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-	if (brazilianDate) return `${brazilianDate[3]}-${brazilianDate[2]}-${brazilianDate[1]}`;
-	return value.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || '';
-}
-
-function parseImportAmount(value) {
-	let text = value.replace(/[^\d,.-]/g, '');
-	if (text.includes(',')) text = text.replace(/\./g, '').replace(',', '.');
-	return Number(text);
-}
-
-function parseCsv(text) {
-	const lines = text.split(/\r?\n/).filter((line) => line.trim());
-	if (!lines.length) return [];
-	const separator = lines[0].includes(';') ? ';' : ',';
-	const header = splitCsvLine(lines[0], separator).map(normalizeText);
-	const findColumn = (names) => header.findIndex((column) => names.some((name) => column.includes(name)));
-	let dateIndex = findColumn(['data', 'date']);
-	let amountIndex = findColumn(['valor', 'amount', 'value', 'quantia']);
-	let descriptionIndex = findColumn(['descri', 'histori', 'lancamento', 'memo', 'title', 'titulo', 'estabelecimento']);
-	const hasHeader = dateIndex >= 0 && amountIndex >= 0;
-	if (!hasHeader) {
-		dateIndex = 0;
-		descriptionIndex = 1;
-		amountIndex = 2;
-	}
-	if (descriptionIndex < 0) descriptionIndex = header.findIndex((_, index) => index !== dateIndex && index !== amountIndex);
-	return lines.slice(hasHeader ? 1 : 0).map((line) => {
-		const cells = splitCsvLine(line, separator);
-		return {
-			date: parseImportDate(cells[dateIndex] || ''),
-			description: (cells[descriptionIndex] || '').slice(0, 80) || 'Lançamento importado',
-			amount: parseImportAmount(cells[amountIndex] || '')
-		};
-	});
-}
-
-function parseOfx(text) {
-	return [...text.matchAll(/<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi)].map(([, block]) => {
-		const field = (name) => block.match(new RegExp(`<${name}>([^<\\r\\n]*)`, 'i'))?.[1].trim() || '';
-		const rawDate = field('DTPOSTED');
-		const fitId = field('FITID');
-		return {
-			date: rawDate ? `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}` : '',
-			description: (field('MEMO') || field('NAME') || 'Lançamento importado').slice(0, 80),
-			amount: Number(field('TRNAMT').replace(',', '.')),
-			importId: fitId ? `ofx-${fitId}` : ''
-		};
-	});
-}
-
-function assignImportIds(rows) {
-	const occurrences = new Map();
-	return rows.map((row) => {
-		const baseId = (row.importId || `csv-${row.date}-${row.amount}-${normalizeText(row.description)}`).slice(0, 140);
-		const count = (occurrences.get(baseId) || 0) + 1;
-		occurrences.set(baseId, count);
-		return { ...row, importId: count > 1 ? `${baseId}-${count}` : baseId };
-	});
 }
 
 function renderImportPreview() {
@@ -2347,6 +2694,1164 @@ importForm.addEventListener('submit', async (event) => {
 		submitButton.textContent = 'Importar lançamentos';
 	}
 });
+
+/* ---------- Shared helpers for the new features ---------- */
+
+function getPlanningContext() {
+	return {
+		transactions: currentTransactions,
+		accounts,
+		recurringItems,
+		investments,
+		monthlyIncome,
+		goals: goalsData,
+		categoryBudgets,
+		categoryGroups,
+		today: getToday()
+	};
+}
+
+function userDocument(...path) {
+	return doc(database, 'users', auth.currentUser.uid, ...path);
+}
+
+/* ---------- Toast and undo ---------- */
+
+const toastElement = document.querySelector('#toast');
+const toastMessage = document.querySelector('#toast-message');
+const toastButton = document.querySelector('#toast-action');
+
+function hideToast() {
+	clearTimeout(toastTimer);
+	toastAction = undefined;
+	toastElement.hidden = true;
+}
+
+// Runs the pending "expire" callback right away (e.g. before logging out or showing another toast).
+async function flushToast() {
+	const pending = toastAction;
+	hideToast();
+	if (pending?.onExpire) await pending.onExpire();
+}
+
+async function showToast(message, { actionLabel = 'Desfazer', onAction, onExpire, duration = 7000 } = {}) {
+	await flushToast();
+	toastMessage.textContent = message;
+	toastButton.textContent = actionLabel;
+	toastButton.hidden = !onAction;
+	toastElement.hidden = false;
+	toastAction = { onAction, onExpire };
+	toastTimer = setTimeout(() => {
+		flushToast().catch((error) => console.error('Erro ao finalizar ação:', error));
+	}, duration);
+}
+
+toastButton.addEventListener('click', async () => {
+	const pending = toastAction;
+	hideToast();
+	if (pending?.onAction) {
+		try {
+			await pending.onAction();
+		} catch (error) {
+			console.error('Erro ao desfazer:', error);
+		}
+	}
+});
+
+async function deleteWithUndo({ label, items, onFinalize }) {
+	try {
+		const batch = writeBatch(database);
+		items.forEach(({ path }) => batch.delete(userDocument(...path)));
+		await batch.commit();
+	} catch (error) {
+		console.error('Erro ao excluir:', error);
+		return;
+	}
+	await showToast(label, {
+		onAction: async () => {
+			const batch = writeBatch(database);
+			items.forEach(({ path, data }) => {
+				const { id, ...rest } = data;
+				batch.set(userDocument(...path), rest);
+			});
+			await batch.commit();
+		},
+		onExpire: onFinalize
+	});
+}
+
+/* ---------- Receipts ---------- */
+
+const receiptModal = document.querySelector('#receipt-modal');
+let receiptObjectUrl = '';
+
+async function viewReceipt(receipt) {
+	if (!receipt?.id) return;
+	const viewer = document.querySelector('#receipt-viewer');
+	const download = document.querySelector('#receipt-download');
+	document.querySelector('#receipt-title').textContent = receipt.name || 'Comprovante';
+	viewer.replaceChildren(createEmptyState('Carregando comprovante...'));
+	download.hidden = true;
+	receiptModal.showModal();
+	try {
+		const snapshot = await getDoc(userDocument('receipts', receipt.id));
+		const data = snapshot.data()?.data;
+		if (!data) throw new Error('Comprovante não encontrado.');
+		if (receiptObjectUrl) URL.revokeObjectURL(receiptObjectUrl);
+		receiptObjectUrl = dataUrlToObjectUrl(data);
+		const isPdf = data.startsWith('data:application/pdf');
+		const preview = document.createElement(isPdf ? 'iframe' : 'img');
+		preview.src = receiptObjectUrl;
+		if (isPdf) preview.title = receipt.name || 'Comprovante';
+		else preview.alt = receipt.name || 'Comprovante';
+		viewer.replaceChildren(preview);
+		download.href = receiptObjectUrl;
+		download.download = receipt.name || 'comprovante';
+		download.hidden = false;
+	} catch (error) {
+		console.error('Erro ao abrir comprovante:', error);
+		viewer.replaceChildren(createEmptyState('Não foi possível abrir o comprovante.'));
+	}
+}
+
+/* ---------- Credit card invoices ---------- */
+
+function openInvoiceModal(card, month) {
+	const today = getToday();
+	invoiceView = { cardId: card.id, month: month || getInvoiceMonth(card, today) };
+	const select = document.querySelector('#invoice-pay-account');
+	select.replaceChildren();
+	accounts.filter((account) => account.type !== 'credit').forEach((account) => select.add(new Option(account.name, account.id)));
+	select.add(new Option('Sem conta (só registrar o pagamento)', ''));
+	document.querySelector('#invoice-pay-date').value = today;
+	document.querySelector('#invoice-pay-error').textContent = '';
+	renderInvoice();
+	invoiceModal.showModal();
+}
+
+function renderInvoice() {
+	const card = getAccount(invoiceView.cardId);
+	if (!card) {
+		invoiceModal.close();
+		return;
+	}
+	const today = getToday();
+	const invoice = getInvoice(card, invoiceView.month, currentTransactions, today);
+	const status = document.querySelector('#invoice-status');
+	const list = document.querySelector('#invoice-items');
+	document.querySelector('#invoice-card-name').textContent = card.name;
+	document.querySelector('#invoice-month-label').textContent = formatMonthLabel(invoice.month);
+	setMoney(document.querySelector('#invoice-total'), invoice.total);
+	setMoney(document.querySelector('#invoice-paid'), invoice.paid);
+	document.querySelector('#invoice-closing').textContent = formatTransactionDate(invoice.closingDate);
+	document.querySelector('#invoice-due').textContent = formatTransactionDate(invoice.dueDate);
+	status.className = `invoice-status ${invoice.status}`;
+	status.textContent = invoiceStatusLabels[invoice.status];
+	list.replaceChildren();
+	if (!invoice.items.length) list.append(createEmptyState('Nenhuma compra nesta fatura.'));
+	invoice.items.forEach((item) => {
+		const row = document.createElement('div');
+		const info = document.createElement('div');
+		const title = document.createElement('strong');
+		const meta = document.createElement('span');
+		const value = document.createElement('strong');
+		row.className = 'invoice-item';
+		title.textContent = item.description;
+		meta.textContent = `${formatTransactionDate(getTransactionDate(item))} · ${item.category}`;
+		value.className = item.type === 'income' ? 'income-value' : 'expense-value';
+		value.textContent = `${item.type === 'income' ? '+' : ''}${currencyFormatter.format(item.amount)}`;
+		info.append(title, meta);
+		row.append(info, value);
+		list.append(row);
+	});
+	invoice.payments.forEach((payment) => {
+		const row = document.createElement('div');
+		row.className = 'invoice-item payment';
+		const info = document.createElement('div');
+		const title = document.createElement('strong');
+		const meta = document.createElement('span');
+		const value = document.createElement('strong');
+		title.textContent = 'Pagamento';
+		meta.textContent = `${formatTransactionDate(getTransactionDate(payment))} · ${payment.fromAccountId ? getAccount(payment.fromAccountId)?.name || 'Conta removida' : 'Sem conta'}`;
+		value.className = 'income-value';
+		value.textContent = `- ${currencyFormatter.format(payment.amount)}`;
+		info.append(title, meta);
+		row.append(info, value);
+		list.append(row);
+	});
+	const payForm = document.querySelector('#invoice-pay-form');
+	payForm.hidden = invoice.remaining <= 0;
+	document.querySelector('#invoice-pay-amount').value = invoice.remaining ? invoice.remaining.toFixed(2) : '';
+	document.querySelector('#invoice-pay-submit').textContent = invoice.status === 'open' ? 'Antecipar pagamento' : 'Pagar fatura';
+}
+
+document.querySelector('#invoice-prev').addEventListener('click', () => {
+	invoiceView.month = addMonths(invoiceView.month, -1);
+	renderInvoice();
+});
+
+document.querySelector('#invoice-next').addEventListener('click', () => {
+	invoiceView.month = addMonths(invoiceView.month, 1);
+	renderInvoice();
+});
+
+document.querySelector('#invoice-pay-form').addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const card = getAccount(invoiceView.cardId);
+	const amount = Number(document.querySelector('#invoice-pay-amount').value);
+	const fromAccountId = document.querySelector('#invoice-pay-account').value;
+	const transactionDate = document.querySelector('#invoice-pay-date').value;
+	const errorMessage = document.querySelector('#invoice-pay-error');
+	const submitButton = document.querySelector('#invoice-pay-submit');
+	if (!card || !Number.isFinite(amount) || amount <= 0 || !transactionDate) return;
+	errorMessage.textContent = '';
+	submitButton.disabled = true;
+	try {
+		const monthLabel = formatMonthLabel(invoiceView.month).toLowerCase();
+		await addDoc(collection(database, 'users', auth.currentUser.uid, 'transactions'), {
+			description: `Pagamento da fatura ${card.name} (${monthLabel})`,
+			amount: roundMoney(amount),
+			transactionDate,
+			type: 'transfer',
+			category: 'Transferência',
+			accountId: '',
+			fromAccountId,
+			toAccountId: card.id,
+			invoiceMonth: invoiceView.month,
+			status: 'paid',
+			tags: ['fatura'],
+			notes: '',
+			createdAt: new Date().toISOString()
+		});
+		await addNotification(`Você pagou ${currencyFormatter.format(amount)} da fatura ${card.name} de ${monthLabel}.`, '✓');
+	} catch (error) {
+		console.error('Erro ao pagar fatura:', error);
+		errorMessage.textContent = 'Não foi possível registrar o pagamento. Tente novamente.';
+	} finally {
+		submitButton.disabled = false;
+	}
+});
+
+/* ---------- Alerts ---------- */
+
+async function raiseAlert(key, message, symbol) {
+	if (!auth.currentUser) return;
+	if (key) {
+		if (sentAlerts[key]) return;
+		sentAlerts[key] = getToday();
+		await setDoc(doc(database, 'users', auth.currentUser.uid), { sentAlerts: { [key]: getToday() } }, { merge: true });
+	}
+	await addNotification(message, symbol);
+	if (alertSettings.push) showSystemNotification(message, key || undefined);
+}
+
+function pruneSentAlerts() {
+	const limit = toDateKey(new Date(Date.now() - 120 * 86400000));
+	const kept = Object.fromEntries(Object.entries(sentAlerts).filter(([key, date]) => key === 'ach-init' || date >= limit));
+	if (Object.keys(kept).length === Object.keys(sentAlerts).length) return;
+	sentAlerts = kept;
+	setDoc(doc(database, 'users', auth.currentUser.uid), { sentAlerts: kept }, { mergeFields: ['sentAlerts'] })
+		.catch((error) => console.error('Erro ao limpar alertas antigos:', error));
+}
+
+function scheduleAlertCheck() {
+	clearTimeout(alertTimer);
+	// Waits for all listeners to settle so alerts are not computed from partial data.
+	alertTimer = setTimeout(() => {
+		runAlertChecks().catch((error) => console.error('Erro ao verificar alertas:', error));
+	}, 1500);
+}
+
+async function runAlertChecks() {
+	if (!auth.currentUser || !['transactions', 'accounts', 'goals', 'investments', 'recurring'].every((name) => loadedCollections.has(name))) return;
+	const today = getToday();
+	const month = getCurrentMonth();
+	const cards = accounts.filter((account) => account.type === 'credit');
+	if (alertSettings.invoice) {
+		const warningDays = Number(alertSettings.invoiceDays) || 0;
+		for (const card of cards) {
+			const current = getInvoice(card, getInvoiceMonth(card, today), currentTransactions, today);
+			const daysToClose = daysBetween(today, current.closingDate);
+			if (current.remaining > 0 && daysToClose >= 0 && daysToClose <= warningDays) {
+				await raiseAlert(`inv-close-${card.id}-${current.month}`, `A fatura ${card.name} fecha ${daysToClose ? `em ${daysToClose} dia(s)` : 'hoje'} com ${currencyFormatter.format(current.remaining)} a pagar.`, '▭');
+			}
+			for (const invoice of getPendingInvoices(card, currentTransactions, today, 2)) {
+				const label = formatMonthLabel(invoice.month).toLowerCase();
+				const daysToDue = daysBetween(today, invoice.dueDate);
+				if (invoice.status === 'overdue') {
+					await raiseAlert(`inv-late-${card.id}-${invoice.month}`, `A fatura ${card.name} de ${label} está atrasada: ${currencyFormatter.format(invoice.remaining)} em aberto desde ${formatTransactionDate(invoice.dueDate)}.`, '!');
+				} else if (daysToDue <= warningDays) {
+					await raiseAlert(`inv-due-${card.id}-${invoice.month}`, `A fatura ${card.name} de ${label} vence ${daysToDue ? `em ${daysToDue} dia(s)` : 'hoje'}: ${currencyFormatter.format(invoice.remaining)} a pagar.`, '▭');
+				}
+			}
+		}
+	}
+	if (alertSettings.cardLimit) {
+		const threshold = Number(alertSettings.cardLimitPercent) || 80;
+		for (const card of cards) {
+			const usage = getCardSummary(card, currentTransactions, today);
+			if (!usage.limit || usage.percent < threshold) continue;
+			const level = usage.percent >= 100 ? 100 : threshold;
+			await raiseAlert(`limit-${card.id}-${month}-${level}`, level === 100
+				? `Você atingiu o limite do cartão ${card.name}.`
+				: `Você já usou ${Math.round(usage.percent)}% do limite do cartão ${card.name}. Disponível: ${currencyFormatter.format(usage.available)}.`, '!');
+		}
+	}
+	if (alertSettings.forecast && lastForecastValue < 0 && Number(today.slice(8)) >= 3) {
+		await raiseAlert(`forecast-${month}`, `Atenção: no ritmo atual, seu saldo deve fechar o mês negativo em ${currencyFormatter.format(-lastForecastValue)}.`, '⚠');
+	}
+	if (alertSettings.goals) {
+		for (const goal of goalsData) {
+			if (!goal.deadline || goal.deadline < today || goal.currentAmount >= goal.targetAmount) continue;
+			const expected = getGoalExpectedProgress(goal, today);
+			const actual = goal.currentAmount / goal.targetAmount;
+			if (expected === null || expected < 0.15 || actual >= expected - 0.1) continue;
+			await raiseAlert(`goal-${goal.id}-${month}`, `A meta ${goal.title} está atrasada: você tem ${Math.round(actual * 100)}% do valor, mas o plano previa ${Math.round(expected * 100)}% até agora. ${getGoalPlan(goal)}.`, '◎');
+		}
+	}
+	if (alertSettings.achievements) await checkAchievementAlerts();
+	await updateScheduledAlerts();
+}
+
+async function checkAchievementAlerts() {
+	const ctx = getPlanningContext();
+	const unlocked = computeAchievements(ctx).filter((achievement) => achievement.unlocked);
+	if (!sentAlerts['ach-init']) {
+		// First run: register what was already achieved without flooding the user with notifications.
+		const initial = Object.fromEntries([...unlocked.map((achievement) => [`ach-${achievement.id}`, getToday()]), ['ach-init', getToday()]]);
+		sentAlerts = { ...sentAlerts, ...initial };
+		await setDoc(doc(database, 'users', auth.currentUser.uid), { sentAlerts: initial }, { merge: true });
+	} else {
+		for (const achievement of unlocked) {
+			await raiseAlert(`ach-${achievement.id}`, `Conquista desbloqueada: ${achievement.title}! ${achievement.description}`, '★');
+		}
+	}
+	const previousMonth = addMonths(getCurrentMonth(), -1);
+	if (getMonthTransactions(previousMonth).length) {
+		await raiseAlert(`retro-${previousMonth}`, `Sua retrospectiva de ${formatMonthLabel(previousMonth).toLowerCase()} está pronta. Veja em Relatórios → Retrospectiva do mês.`, '★');
+	}
+}
+
+// Saves upcoming bills and invoices so the service worker can notify even with the site closed.
+async function updateScheduledAlerts() {
+	if (!alertSettings.push || !systemNotificationsSupported() || Notification.permission !== 'granted') return;
+	const today = getToday();
+	const scheduled = [];
+	if (alertSettings.bills) {
+		currentTransactions.filter((item) => item.type === 'expense' && !isPaid(item)).forEach((bill) => {
+			const due = getTransactionDate(bill);
+			if (daysBetween(today, due) > 60) return;
+			scheduled.push({
+				key: `bill-${bill.id}-${due}`,
+				fireOn: toDateKey(new Date(new Date(`${due}T12:00:00`).getTime() - (Number(alertSettings.billDays) || 0) * 86400000)),
+				until: toDateKey(new Date(new Date(`${due}T12:00:00`).getTime() + 7 * 86400000)),
+				message: `A conta ${bill.description} (${currencyFormatter.format(bill.amount)}) vence em ${formatTransactionDate(due)}.`
+			});
+		});
+	}
+	if (alertSettings.invoice) {
+		accounts.filter((account) => account.type === 'credit').forEach((card) => {
+			const currentMonth = getInvoiceMonth(card, today);
+			[-1, 0, 1].forEach((offset) => {
+				const invoice = getInvoice(card, addMonths(currentMonth, offset), currentTransactions, today);
+				if (invoice.remaining <= 0 || invoice.status === 'paid') return;
+				scheduled.push({
+					key: `invoice-${card.id}-${invoice.month}`,
+					fireOn: toDateKey(new Date(new Date(`${invoice.dueDate}T12:00:00`).getTime() - (Number(alertSettings.invoiceDays) || 0) * 86400000)),
+					until: toDateKey(new Date(new Date(`${invoice.dueDate}T12:00:00`).getTime() + 7 * 86400000)),
+					message: `A fatura ${card.name} (${currencyFormatter.format(invoice.remaining)}) vence em ${formatTransactionDate(invoice.dueDate)}.`
+				});
+			});
+		});
+	}
+	await saveScheduledAlerts(scheduled);
+	navigator.serviceWorker.controller?.postMessage('check-alerts');
+}
+
+function openAlertSettings() {
+	const fields = {
+		'#alert-bills': 'bills', '#alert-invoice': 'invoice', '#alert-card-limit': 'cardLimit', '#alert-budget': 'budget',
+		'#alert-forecast': 'forecast', '#alert-unusual': 'unusual', '#alert-goals': 'goals', '#alert-achievements': 'achievements', '#alert-push': 'push'
+	};
+	Object.entries(fields).forEach(([selector, key]) => { document.querySelector(selector).checked = Boolean(alertSettings[key]); });
+	document.querySelector('#alert-bill-days').value = alertSettings.billDays;
+	document.querySelector('#alert-invoice-days').value = alertSettings.invoiceDays;
+	document.querySelector('#alert-card-limit-percent').value = alertSettings.cardLimitPercent;
+	document.querySelector('#alert-settings-error').textContent = '';
+	const pushInput = document.querySelector('#alert-push');
+	pushInput.disabled = !systemNotificationsSupported();
+	if (!systemNotificationsSupported()) document.querySelector('#alert-push-status').textContent = 'Este navegador não suporta notificações do sistema.';
+	notificationPanel.hidden = true;
+	alertSettingsModal.showModal();
+}
+
+document.querySelector('#alert-settings-button').addEventListener('click', openAlertSettings);
+
+alertSettingsForm.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const errorMessage = document.querySelector('#alert-settings-error');
+	const clamp = (value, minimum, maximum, fallback) => Math.min(maximum, Math.max(minimum, Math.round(Number(value)))) || fallback;
+	const settings = {
+		bills: document.querySelector('#alert-bills').checked,
+		billDays: clamp(document.querySelector('#alert-bill-days').value, 0, 15, 0),
+		invoice: document.querySelector('#alert-invoice').checked,
+		invoiceDays: clamp(document.querySelector('#alert-invoice-days').value, 0, 15, 0),
+		cardLimit: document.querySelector('#alert-card-limit').checked,
+		cardLimitPercent: clamp(document.querySelector('#alert-card-limit-percent').value, 10, 100, 80),
+		budget: document.querySelector('#alert-budget').checked,
+		forecast: document.querySelector('#alert-forecast').checked,
+		unusual: document.querySelector('#alert-unusual').checked,
+		goals: document.querySelector('#alert-goals').checked,
+		achievements: document.querySelector('#alert-achievements').checked,
+		push: document.querySelector('#alert-push').checked
+	};
+	errorMessage.classList.remove('success-message');
+	errorMessage.textContent = '';
+	if (settings.push) {
+		const permission = await requestSystemNotifications();
+		if (permission !== 'granted') {
+			settings.push = false;
+			document.querySelector('#alert-push').checked = false;
+			errorMessage.textContent = permission === 'denied'
+				? 'As notificações estão bloqueadas no navegador. Libere-as nas configurações do site e tente de novo.'
+				: 'Não foi possível ativar as notificações neste navegador.';
+		}
+	} else {
+		await clearScheduledAlerts();
+	}
+	try {
+		await setDoc(doc(database, 'users', auth.currentUser.uid), { alertSettings: settings }, { merge: true });
+		alertSettings = settings;
+		notifiedBills.clear();
+		scheduleAlertCheck();
+		if (!errorMessage.textContent) alertSettingsModal.close();
+		if (settings.push) showSystemNotification('Notificações ativadas! Você receberá avisos de contas, faturas e metas.', 'push-enabled');
+	} catch (error) {
+		console.error('Erro ao salvar alertas:', error);
+		errorMessage.textContent = 'Não foi possível salvar suas preferências.';
+	}
+});
+
+/* ---------- Planning: forecast, commitments, 50/30/20 and achievements ---------- */
+
+function renderPlanning() {
+	if (!auth.currentUser) return;
+	const ctx = getPlanningContext();
+	renderForecast(ctx);
+	renderCommitments(ctx);
+	renderRule(ctx);
+	renderAchievements(ctx);
+}
+
+function renderForecast(ctx) {
+	const list = document.querySelector('#forecast-list');
+	const rows = buildForecast(ctx, lastForecastValue, currentBalance);
+	const highest = Math.max(1, ...rows.map((row) => Math.abs(row.net)));
+	list.replaceChildren(...rows.map((row) => {
+		const item = document.createElement('div');
+		const label = document.createElement('span');
+		const bar = document.createElement('i');
+		const fill = document.createElement('b');
+		const values = document.createElement('div');
+		const net = document.createElement('strong');
+		const cumulative = document.createElement('small');
+		const detail = document.createElement('small');
+		item.className = `forecast-row${row.isCurrent ? ' current' : ''}`;
+		label.textContent = row.isCurrent ? `${formatShortMonth(row.month)} (atual)` : `${formatShortMonth(row.month)}/${row.month.slice(2, 4)}`;
+		fill.style.width = `${(Math.abs(row.net) / highest) * 100}%`;
+		fill.className = row.net < 0 ? 'negative' : '';
+		bar.append(fill);
+		setMoney(net, row.net);
+		net.className = row.net < 0 ? 'is-negative' : 'is-positive';
+		cumulative.textContent = `Saldo previsto: ${currencyFormatter.format(row.cumulative)}`;
+		detail.className = 'forecast-detail';
+		detail.textContent = row.isCurrent
+			? `Variação até o fim do mês, partindo do saldo de hoje (${currencyFormatter.format(currentBalance)}).`
+			: `Entradas ${currencyFormatter.format(row.income)} · contas e faturas ${currencyFormatter.format(row.committed)} · dia a dia ~${currencyFormatter.format(row.variable)}${row.investments ? ` · aportes ${currencyFormatter.format(row.investments)}` : ''}`;
+		values.append(net, cumulative);
+		item.append(label, bar, values, detail);
+		return item;
+	}));
+	const firstNegative = rows.find((row) => row.cumulative < 0);
+	const summary = document.querySelector('#forecast-summary');
+	summary.classList.toggle('is-negative', Boolean(firstNegative));
+	summary.textContent = !ctx.monthlyIncome && !ctx.transactions.length
+		? 'Cadastre sua renda e alguns lançamentos para ver a previsão.'
+		: firstNegative
+			? `Atenção: mantendo o ritmo, seu saldo fica negativo em ${formatMonthLabel(firstNegative.month).toLowerCase()}.`
+			: `Mantendo o ritmo, seu saldo deve chegar a ${currencyFormatter.format(rows.at(-1).cumulative)} em ${formatMonthLabel(rows.at(-1).month).toLowerCase()}.`;
+}
+
+function renderCommitments(ctx) {
+	const { months, installmentGroups, remainingInstallments } = buildCommitments(ctx);
+	const list = document.querySelector('#commitment-list');
+	setMoney(document.querySelector('#installments-remaining'), remainingInstallments);
+	document.querySelector('#installments-remaining').title = 'Total de parcelas futuras';
+	list.replaceChildren(...months.map((month) => {
+		const item = document.createElement('div');
+		const header = document.createElement('div');
+		const label = document.createElement('strong');
+		const value = document.createElement('span');
+		const bar = document.createElement('i');
+		const fill = document.createElement('b');
+		const detail = document.createElement('small');
+		item.className = `commitment-item${month.percent >= 50 ? ' over' : month.percent >= 30 ? ' warning' : ''}`;
+		label.textContent = formatMonthLabel(month.month);
+		value.textContent = `${currencyFormatter.format(month.total)}${month.income ? ` · ${Math.round(month.percent)}% da renda` : ''}`;
+		fill.style.width = `${Math.min(100, month.percent)}%`;
+		detail.textContent = [
+			month.installments && `parcelas ${currencyFormatter.format(month.installments)}`,
+			month.recurringExpenses && `fixos ${currencyFormatter.format(month.recurringExpenses)}`,
+			month.otherExpenses && `agendados ${currencyFormatter.format(month.otherExpenses)}`
+		].filter(Boolean).join(' · ') || 'Nada comprometido ainda.';
+		header.append(label, value);
+		bar.append(fill);
+		item.append(header, bar, detail);
+		return item;
+	}));
+	const groups = document.querySelector('#installment-groups');
+	groups.replaceChildren();
+	if (!installmentGroups.length) return;
+	const title = document.createElement('p');
+	title.className = 'section-kicker';
+	title.textContent = 'Parcelamentos em andamento';
+	groups.append(title, ...installmentGroups.slice(0, 8).map((group) => {
+		const row = document.createElement('div');
+		const info = document.createElement('div');
+		const name = document.createElement('strong');
+		const meta = document.createElement('span');
+		const value = document.createElement('strong');
+		row.className = 'installment-group';
+		name.textContent = group.description;
+		meta.textContent = `faltam ${group.remainingCount} de ${group.total} · termina em ${formatMonthLabel(group.lastMonth).toLowerCase()}`;
+		value.textContent = currencyFormatter.format(group.remainingAmount);
+		info.append(name, meta);
+		row.append(info, value);
+		return row;
+	}));
+}
+
+function renderRule(ctx) {
+	const month = getCurrentMonth();
+	const groups = buildRule503020(ctx, month);
+	const income = groups[0].amount + groups[1].amount + groups[2].amount;
+	document.querySelector('#rule-period').textContent = formatMonthLabel(month);
+	const list = document.querySelector('#rule-list');
+	if (!ctx.monthlyIncome && !income) {
+		list.replaceChildren(createEmptyState('Cadastre sua renda e suas despesas para ver a divisão do seu dinheiro.'));
+		return;
+	}
+	list.replaceChildren(...groups.map((group) => {
+		const item = document.createElement('div');
+		const header = document.createElement('div');
+		const label = document.createElement('strong');
+		const value = document.createElement('span');
+		const bar = document.createElement('i');
+		const fill = document.createElement('b');
+		const marker = document.createElement('em');
+		const status = document.createElement('small');
+		const isSavings = group.key === 'savings';
+		const isOff = isSavings ? group.percent < group.target : group.percent > group.target;
+		item.className = `rule-item${isOff ? (isSavings ? ' warning' : ' over') : ''}`;
+		label.textContent = `${group.label}`;
+		value.textContent = `${Math.round(group.percent)}% · ${currencyFormatter.format(group.amount)}`;
+		fill.style.width = `${Math.min(100, group.percent)}%`;
+		fill.style.background = group.color;
+		marker.style.left = `${group.target}%`;
+		marker.title = `Meta: ${group.target}%`;
+		status.textContent = isSavings
+			? (isOff ? `Ideal: ${group.target}% (${currencyFormatter.format(group.ideal)}). Faltam ${currencyFormatter.format(group.ideal - group.amount)}.` : `Parabéns! Acima dos ${group.target}% recomendados.`)
+			: (isOff ? `Acima do ideal de ${group.target}% em ${currencyFormatter.format(group.amount - group.ideal)}.` : `Dentro do ideal de ${group.target}% (até ${currencyFormatter.format(group.ideal)}).`);
+		header.append(label, value);
+		bar.append(fill, marker);
+		item.append(header, bar, status);
+		return item;
+	}));
+}
+
+function renderAchievements(ctx) {
+	const achievements = computeAchievements(ctx);
+	const streak = getBudgetStreak(ctx);
+	document.querySelector('#streak-badge').textContent = `${streak} ${streak === 1 ? 'mês' : 'meses'} no azul${streak >= 3 ? ' 🔥' : ''}`;
+	document.querySelector('#achievement-grid').replaceChildren(...achievements.map((achievement) => {
+		const item = document.createElement('article');
+		const icon = document.createElement('span');
+		const title = document.createElement('strong');
+		const description = document.createElement('small');
+		const bar = document.createElement('i');
+		const fill = document.createElement('b');
+		item.className = `achievement${achievement.unlocked ? ' unlocked' : ''}`;
+		item.title = achievement.unlocked ? 'Conquistada!' : `${achievement.progress}% concluído`;
+		icon.textContent = achievement.icon;
+		title.textContent = achievement.title;
+		description.textContent = achievement.detail && !achievement.unlocked ? `${achievement.description} (${achievement.detail})` : achievement.description;
+		fill.style.width = `${achievement.progress}%`;
+		bar.className = 'mini-progress';
+		bar.append(fill);
+		item.append(icon, title, description, bar);
+		return item;
+	}));
+}
+
+/* ---------- 50/30/20 category classification ---------- */
+
+document.querySelector('#rule-categories-button').addEventListener('click', () => {
+	const fields = document.querySelector('#category-groups-fields');
+	fields.replaceChildren(...getCategories().map((category) => {
+		const label = document.createElement('label');
+		const select = document.createElement('select');
+		label.textContent = `${category.icon} ${category.name}`;
+		Object.entries(ruleGroups).forEach(([key, group]) => select.add(new Option(group.label, key)));
+		select.value = getCategoryGroup(category.name, categoryGroups);
+		select.dataset.category = category.name;
+		label.append(select);
+		return label;
+	}));
+	categoryGroupsModal.showModal();
+});
+
+categoryGroupsForm.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const groups = {};
+	categoryGroupsForm.querySelectorAll('select[data-category]').forEach((select) => {
+		if (select.value !== (defaultCategoryGroups[select.dataset.category] || 'wants')) groups[select.dataset.category] = select.value;
+	});
+	try {
+		await setDoc(doc(database, 'users', auth.currentUser.uid), { categoryGroups: groups }, { mergeFields: ['categoryGroups'] });
+		categoryGroups = groups;
+		renderPlanning();
+		categoryGroupsModal.close();
+	} catch (error) {
+		console.error('Erro ao salvar classificação:', error);
+	}
+});
+
+/* ---------- Financial calendar ---------- */
+
+function getCalendarEvents(month) {
+	const currentMonth = getCurrentMonth();
+	const events = [];
+	currentTransactions.forEach((transaction) => {
+		const date = getTransactionDate(transaction);
+		if (isTransfer(transaction) || transaction.adjustment || !date.startsWith(month)) return;
+		events.push({
+			date, kind: transaction.type, amount: transaction.amount, label: transaction.description,
+			detail: transaction.category, pending: !isPaid(transaction)
+		});
+	});
+	if (month >= currentMonth) {
+		recurringItems.filter((item) => (item.lastGeneratedMonth || '') < month).forEach((item) => {
+			events.push({
+				date: dateInMonth(month, item.dayOfMonth), kind: item.type, amount: item.amount, label: item.description,
+				detail: `${item.category} · previsto`, projected: true
+			});
+		});
+	}
+	accounts.filter((account) => account.type === 'credit').forEach((card) => {
+		[-1, 0, 1].forEach((offset) => {
+			const invoice = getInvoice(card, addMonths(month, offset), currentTransactions, getToday());
+			if (!invoice.dueDate.startsWith(month) || invoice.total <= 0) return;
+			events.push({
+				date: invoice.dueDate, kind: 'invoice', amount: invoice.status === 'paid' ? invoice.total : invoice.remaining || invoice.total,
+				label: `Fatura ${card.name}`, detail: invoiceStatusLabels[invoice.status], pending: invoice.status !== 'paid', card
+			});
+		});
+	});
+	return events;
+}
+
+function renderCalendar() {
+	const grid = document.querySelector('#calendar-grid');
+	if (!grid) return;
+	const today = getToday();
+	const events = getCalendarEvents(calendarMonth);
+	const byDate = new Map();
+	events.forEach((event) => byDate.set(event.date, [...(byDate.get(event.date) || []), event]));
+	document.querySelector('#calendar-title').textContent = formatMonthLabel(calendarMonth);
+	const weekdays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((name) => {
+		const cell = document.createElement('span');
+		cell.className = 'calendar-weekday';
+		cell.textContent = name;
+		return cell;
+	});
+	const firstWeekday = new Date(`${calendarMonth}-01T12:00:00`).getDay();
+	const blanks = Array.from({ length: firstWeekday }, () => {
+		const cell = document.createElement('span');
+		cell.className = 'calendar-blank';
+		return cell;
+	});
+	const days = Array.from({ length: getDaysInMonth(calendarMonth) }, (_, index) => {
+		const date = dateInMonth(calendarMonth, index + 1);
+		const dayEvents = byDate.get(date) || [];
+		const cell = document.createElement('button');
+		const number = document.createElement('span');
+		const income = sumAmounts(dayEvents.filter((event) => event.kind === 'income'));
+		const expense = sumAmounts(dayEvents.filter((event) => event.kind === 'expense'));
+		cell.type = 'button';
+		cell.className = 'calendar-day';
+		cell.classList.toggle('today', date === today);
+		cell.classList.toggle('selected', date === selectedCalendarDate);
+		cell.classList.toggle('past', date < today);
+		cell.setAttribute('aria-label', `${formatTransactionDate(date)}: ${dayEvents.length} item(ns)`);
+		number.className = 'calendar-number';
+		number.textContent = index + 1;
+		cell.append(number);
+		if (income) {
+			const value = document.createElement('small');
+			value.className = 'income-value';
+			value.textContent = `+${compactMoney(income)}`;
+			cell.append(value);
+		}
+		if (expense) {
+			const value = document.createElement('small');
+			value.className = 'expense-value';
+			value.textContent = `-${compactMoney(expense)}`;
+			cell.append(value);
+		}
+		const dots = document.createElement('span');
+		dots.className = 'calendar-dots';
+		if (dayEvents.some((event) => event.kind === 'income')) dots.append(createDot('income-dot'));
+		if (dayEvents.some((event) => event.kind === 'expense' && !event.pending && !event.projected)) dots.append(createDot('expense-dot'));
+		if (dayEvents.some((event) => event.pending && event.kind !== 'invoice')) dots.append(createDot('pending-dot'));
+		if (dayEvents.some((event) => event.kind === 'invoice')) dots.append(createDot('invoice-dot'));
+		if (dayEvents.some((event) => event.projected)) dots.append(createDot('projected-dot'));
+		if (dots.childElementCount) cell.append(dots);
+		cell.addEventListener('click', () => {
+			selectedCalendarDate = date;
+			renderCalendar();
+		});
+		return cell;
+	});
+	grid.replaceChildren(...weekdays, ...blanks, ...days);
+	renderCalendarDetails(events);
+}
+
+function createDot(className) {
+	const dot = document.createElement('i');
+	dot.className = `legend-dot ${className}`;
+	return dot;
+}
+
+function compactMoney(value) {
+	if (!valuesVisible) return '•••';
+	if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1).replace('.', ',')}k`;
+	return Math.round(value).toString();
+}
+
+function renderCalendarDetails(events) {
+	const container = document.querySelector('#calendar-details');
+	const monthIncome = sumAmounts(events.filter((event) => event.kind === 'income'));
+	const monthExpense = sumAmounts(events.filter((event) => event.kind === 'expense'));
+	const summary = document.createElement('p');
+	summary.className = 'calendar-summary';
+	summary.textContent = `${formatMonthLabel(calendarMonth)}: entradas ${currencyFormatter.format(monthIncome)} · saídas ${currencyFormatter.format(monthExpense)}${calendarMonth >= getCurrentMonth() ? ' (inclui previstos)' : ''}`;
+	if (!selectedCalendarDate.startsWith(calendarMonth)) {
+		container.replaceChildren(summary, createEmptyState('Clique em um dia para ver os detalhes.'));
+		return;
+	}
+	const dayEvents = events.filter((event) => event.date === selectedCalendarDate);
+	const title = document.createElement('h3');
+	const dayLabel = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${selectedCalendarDate}T12:00:00`));
+	title.textContent = dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1);
+	const list = document.createElement('div');
+	list.className = 'calendar-event-list';
+	if (!dayEvents.length) list.append(createEmptyState('Nada programado para este dia.'));
+	dayEvents.forEach((event) => {
+		const row = document.createElement('div');
+		const info = document.createElement('div');
+		const name = document.createElement('strong');
+		const meta = document.createElement('span');
+		const value = document.createElement('strong');
+		row.className = `calendar-event ${event.kind}${event.pending ? ' pending' : ''}${event.projected ? ' projected' : ''}`;
+		name.textContent = event.label;
+		meta.textContent = [event.detail, event.pending && event.kind !== 'invoice' ? (event.kind === 'income' ? 'a receber' : 'a pagar') : ''].filter(Boolean).join(' · ');
+		value.className = event.kind === 'income' ? 'income-value' : 'expense-value';
+		value.textContent = `${event.kind === 'income' ? '+' : '-'} ${currencyFormatter.format(event.amount)}`;
+		info.append(name, meta);
+		row.append(info, value);
+		if (event.kind === 'invoice') {
+			row.classList.add('clickable');
+			row.addEventListener('click', () => openInvoiceModal(event.card, addMonths(selectedCalendarDate.slice(0, 7), Number(event.card.dueDay) > Number(event.card.closingDay) ? 0 : -1)));
+		}
+		list.append(row);
+	});
+	container.replaceChildren(summary, title, list);
+}
+
+document.querySelector('#calendar-prev').addEventListener('click', () => {
+	calendarMonth = addMonths(calendarMonth, -1);
+	renderCalendar();
+});
+document.querySelector('#calendar-next').addEventListener('click', () => {
+	calendarMonth = addMonths(calendarMonth, 1);
+	renderCalendar();
+});
+document.querySelector('#calendar-today').addEventListener('click', () => {
+	calendarMonth = getCurrentMonth();
+	selectedCalendarDate = getToday();
+	renderCalendar();
+});
+
+/* ---------- Quick entry ---------- */
+
+const quickEntryInput = document.querySelector('#quick-entry-input');
+const quickEntryPreview = document.querySelector('#quick-entry-preview');
+const quickEntryDefault = quickEntryPreview.textContent;
+
+function getQuickEntry() {
+	const parsed = parseQuickEntry(quickEntryInput.value, getToday());
+	if (!parsed) return null;
+	const category = suggestCategory(parsed.description, currentTransactions, getCategories().map((item) => item.name)) || 'Outros';
+	return { ...parsed, category };
+}
+
+quickEntryInput.addEventListener('input', () => {
+	quickEntryPreview.classList.remove('is-negative');
+	if (!quickEntryInput.value.trim()) {
+		quickEntryPreview.textContent = quickEntryDefault;
+		return;
+	}
+	const entry = getQuickEntry();
+	if (!entry) {
+		quickEntryPreview.textContent = 'Inclua um valor, por exemplo: "farmácia 32,50".';
+		return;
+	}
+	const installmentText = entry.installments > 1 ? ` em ${entry.installments}x de ${currencyFormatter.format(entry.amount / entry.installments)}` : '';
+	quickEntryPreview.textContent = `${entry.type === 'income' ? 'Receita' : 'Despesa'} · ${entry.description} · ${currencyFormatter.format(entry.amount)}${installmentText} · ${entry.category} · ${entry.date === getToday() ? 'hoje' : formatTransactionDate(entry.date)}`;
+});
+
+document.querySelector('#quick-entry-form').addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const entry = getQuickEntry();
+	if (!entry) {
+		quickEntryPreview.textContent = 'Não entendi. Use, por exemplo: "mercado 50" ou "+ salário 3000".';
+		quickEntryPreview.classList.add('is-negative');
+		return;
+	}
+	const transactionData = {
+		description: entry.description,
+		amount: entry.amount,
+		type: entry.type,
+		category: entry.category,
+		accountId: '',
+		tags: [],
+		notes: '',
+		transactionDate: entry.date,
+		status: entry.date > getToday() ? 'pending' : 'paid'
+	};
+	const firstAmount = entry.amount / entry.installments;
+	const budgetAlert = getBudgetAlert({ ...transactionData, amount: firstAmount });
+	const unusual = alertSettings.unusual ? getUnusualSpending(getPlanningContext(), { ...transactionData, amount: firstAmount }) : null;
+	try {
+		let ids;
+		if (entry.installments > 1) {
+			ids = await saveInstallments(transactionData, entry.installments);
+		} else {
+			const reference = await addDoc(collection(database, 'users', auth.currentUser.uid, 'transactions'), { ...transactionData, createdAt: new Date().toISOString() });
+			ids = [reference.id];
+		}
+		quickEntryInput.value = '';
+		quickEntryPreview.textContent = quickEntryDefault;
+		await showToast(`Adicionado: ${entry.description} · ${currencyFormatter.format(entry.amount)} em ${entry.category}.`, {
+			onAction: async () => {
+				const batch = writeBatch(database);
+				ids.forEach((id) => batch.delete(userDocument('transactions', id)));
+				await batch.commit();
+			},
+			onExpire: () => addNotification(`Você adicionou ${entry.description} pelo lançamento rápido.`, entry.type === 'income' ? '↓' : '↑')
+		});
+		if (budgetAlert && alertSettings.budget) await raiseAlert(null, budgetAlert, '!');
+		if (unusual) await raiseAlert(null, `Gasto fora do comum: ${entry.description} (${currencyFormatter.format(firstAmount)}) é ${unusual.ratio.toFixed(1).replace('.', ',')}x a sua média em ${entry.category}.`, '⚠');
+	} catch (error) {
+		console.error('Erro no lançamento rápido:', error);
+		quickEntryPreview.textContent = 'Não foi possível salvar. Tente novamente.';
+		quickEntryPreview.classList.add('is-negative');
+	}
+});
+
+/* ---------- Subscriptions ---------- */
+
+function renderSubscriptions() {
+	const list = document.querySelector('#subscription-list');
+	const subscriptions = recurringItems.filter((item) => item.type === 'expense' && item.subscription);
+	const monthly = sumAmounts(subscriptions);
+	setMoney(document.querySelector('#subscriptions-monthly'), monthly);
+	setMoney(document.querySelector('#subscriptions-yearly'), monthly * 12);
+	document.querySelector('#subscriptions-share').textContent = monthlyIncome ? `${((monthly / monthlyIncome) * 100).toFixed(1).replace('.', ',')}%` : '—';
+	list.replaceChildren();
+	if (!subscriptions.length) {
+		list.append(createEmptyState('Nenhuma assinatura. Clique em "Nova assinatura" ou marque ☆ em um lançamento fixo.'));
+		return;
+	}
+	subscriptions.sort((first, second) => second.amount - first.amount).forEach((item) => {
+		const row = document.createElement('article');
+		const info = document.createElement('div');
+		const title = document.createElement('strong');
+		const details = document.createElement('span');
+		const value = document.createElement('strong');
+		const actions = document.createElement('div');
+		row.className = 'recurring-item';
+		title.textContent = item.description;
+		details.textContent = `todo dia ${item.dayOfMonth} · ${currencyFormatter.format(item.amount * 12)}/ano`;
+		value.className = 'bill-value expense-value';
+		value.textContent = `${currencyFormatter.format(item.amount)}/mês`;
+		actions.className = 'item-actions';
+		actions.append(
+			createActionButton('★', 'Deixar de tratar como assinatura', () => updateDoc(userDocument('recurring', item.id), { subscription: false })),
+			createRecurringDeleteButton(item, 'Cancelar assinatura')
+		);
+		info.append(title, details);
+		row.append(info, value, actions);
+		list.append(row);
+	});
+}
+
+document.querySelector('#add-subscription-button').addEventListener('click', () => {
+	resetTransactionForm();
+	const recurring = document.querySelector('#transaction-recurring');
+	recurring.checked = true;
+	recurring.dataset.touched = 'true';
+	if ([...document.querySelector('#transaction-category').options].some((option) => option.value === 'Lazer')) {
+		document.querySelector('#transaction-category').value = 'Lazer';
+	}
+	updateInstallmentHint();
+	document.querySelector('#transaction-subscription').checked = true;
+	document.querySelector('#transaction-modal-title').textContent = 'Nova assinatura';
+	modal.showModal();
+});
+
+/* ---------- Split expenses ---------- */
+
+function renderDebts() {
+	const list = document.querySelector('#debt-list');
+	if (!list) return;
+	const open = debts.filter((debt) => !debt.settled);
+	setMoney(document.querySelector('#debts-receivable'), sumAmounts(open.filter((debt) => debt.direction === 'receivable')));
+	setMoney(document.querySelector('#debts-payable'), sumAmounts(open.filter((debt) => debt.direction === 'payable')));
+	list.replaceChildren();
+	if (!open.length) {
+		list.append(createEmptyState('Ninguém te deve e você não deve a ninguém. Marque "Dividir com outras pessoas" ao lançar uma despesa.'));
+	}
+	const people = new Map();
+	open.forEach((debt) => people.set(debt.person, [...(people.get(debt.person) || []), debt]));
+	[...people].sort((first, second) => first[0].localeCompare(second[0])).forEach(([person, items]) => {
+		const group = document.createElement('section');
+		const header = document.createElement('header');
+		const name = document.createElement('strong');
+		const balance = document.createElement('span');
+		const net = sumAmounts(items.filter((debt) => debt.direction === 'receivable')) - sumAmounts(items.filter((debt) => debt.direction === 'payable'));
+		group.className = 'debt-group';
+		name.textContent = person;
+		balance.className = net >= 0 ? 'is-positive' : 'is-negative';
+		balance.textContent = net >= 0 ? `te deve ${currencyFormatter.format(net)}` : `você deve ${currencyFormatter.format(-net)}`;
+		header.append(name, balance);
+		group.append(header);
+		items.forEach((debt) => {
+			const row = document.createElement('div');
+			const info = document.createElement('div');
+			const title = document.createElement('strong');
+			const meta = document.createElement('span');
+			const value = document.createElement('strong');
+			const actions = document.createElement('div');
+			row.className = 'debt-item';
+			title.textContent = debt.description;
+			meta.textContent = `${debt.direction === 'receivable' ? 'Te deve' : 'Você deve'} · ${formatTransactionDate(debt.date || debt.createdAt)}`;
+			value.className = debt.direction === 'receivable' ? 'income-value' : 'expense-value';
+			value.textContent = currencyFormatter.format(debt.amount);
+			actions.className = 'item-actions';
+			actions.append(
+				createActionButton('✓', debt.direction === 'receivable' ? 'Marcar como recebido' : 'Marcar como pago', () => settleDebt(debt)),
+				createActionButton('×', 'Excluir registro', () => deleteWithUndo({
+					label: `Registro "${debt.description}" de ${debt.person} excluído.`,
+					items: [{ path: ['debts', debt.id], data: debt }]
+				}), true)
+			);
+			info.append(title, meta);
+			row.append(info, value, actions);
+			group.append(row);
+		});
+		list.append(group);
+	});
+	const settled = debts.filter((debt) => debt.settled).slice(0, 5);
+	if (settled.length) {
+		const title = document.createElement('p');
+		title.className = 'section-kicker settled-title';
+		title.textContent = 'Quitados recentemente';
+		list.append(title, ...settled.map((debt) => {
+			const row = document.createElement('div');
+			row.className = 'debt-item settled';
+			const info = document.createElement('span');
+			info.textContent = `${debt.person} · ${debt.description} · ${currencyFormatter.format(debt.amount)}`;
+			row.append(info);
+			return row;
+		}));
+	}
+}
+
+async function settleDebt(debt) {
+	const isReceivable = debt.direction === 'receivable';
+	try {
+		await updateDoc(userDocument('debts', debt.id), { settled: true, settledAt: new Date().toISOString() });
+		// Recording the money that came in (or went out) keeps the available balance correct.
+		const reference = await addDoc(collection(database, 'users', auth.currentUser.uid, 'transactions'), {
+			description: isReceivable ? `Reembolso de ${debt.person}: ${debt.description}` : `Pagamento a ${debt.person}: ${debt.description}`,
+			amount: debt.amount,
+			type: isReceivable ? 'income' : 'expense',
+			category: 'Outros',
+			accountId: '',
+			tags: [isReceivable ? 'reembolso' : 'divisão'],
+			notes: '',
+			transactionDate: getToday(),
+			status: 'paid',
+			debtId: debt.id,
+			createdAt: new Date().toISOString()
+		});
+		await showToast(`${debt.person} ${isReceivable ? 'te pagou' : 'foi pago'}: ${currencyFormatter.format(debt.amount)} registrado no seu saldo.`, {
+			onAction: async () => {
+				await updateDoc(userDocument('debts', debt.id), { settled: false, settledAt: deleteField() });
+				await deleteDoc(reference);
+			},
+			onExpire: () => addNotification(isReceivable
+				? `Você recebeu ${currencyFormatter.format(debt.amount)} de ${debt.person} (${debt.description}).`
+				: `Você pagou ${currencyFormatter.format(debt.amount)} a ${debt.person} (${debt.description}).`, '✓')
+		});
+	} catch (error) {
+		console.error('Erro ao quitar registro:', error);
+	}
+}
+
+document.querySelector('#add-debt-button').addEventListener('click', () => {
+	debtForm.reset();
+	debtDirection = 'receivable';
+	document.querySelectorAll('.debt-direction').forEach((button) => button.classList.toggle('active', button.dataset.direction === debtDirection));
+	debtModal.showModal();
+});
+
+document.querySelectorAll('.debt-direction').forEach((button) => button.addEventListener('click', () => {
+	debtDirection = button.dataset.direction;
+	document.querySelectorAll('.debt-direction').forEach((item) => item.classList.toggle('active', item === button));
+}));
+
+debtForm.addEventListener('submit', async (event) => {
+	event.preventDefault();
+	const person = document.querySelector('#debt-person').value.trim().slice(0, 40);
+	const description = document.querySelector('#debt-description').value.trim().slice(0, 80);
+	const amount = Number(document.querySelector('#debt-amount').value);
+	if (!person || !description || !Number.isFinite(amount) || amount <= 0) return;
+	try {
+		await addDoc(collection(database, 'users', auth.currentUser.uid, 'debts'), {
+			person, description, amount: roundMoney(amount), direction: debtDirection, settled: false,
+			date: getToday(), createdAt: new Date().toISOString()
+		});
+		debtModal.close();
+	} catch (error) {
+		console.error('Erro ao salvar registro:', error);
+	}
+});
+
+/* ---------- Monthly retrospective ---------- */
+
+function openRetrospective() {
+	const select = document.querySelector('#retrospective-month');
+	const currentMonth = getCurrentMonth();
+	const months = [...new Set([
+		currentMonth,
+		...currentTransactions.map((transaction) => getTransactionDate(transaction).slice(0, 7)).filter((month) => month && month <= currentMonth)
+	])].sort().reverse().slice(0, 24);
+	select.replaceChildren(...months.map((month) => new Option(formatMonthLabel(month), month)));
+	const previousMonth = addMonths(currentMonth, -1);
+	select.value = months.includes(previousMonth) ? previousMonth : currentMonth;
+	renderRetrospective();
+	retrospectiveModal.showModal();
+}
+
+function createRetroCard(label, amount, className = '') {
+	const card = document.createElement('div');
+	const title = document.createElement('span');
+	const value = document.createElement('strong');
+	title.textContent = label;
+	value.className = className;
+	if (typeof amount === 'number') setMoney(value, amount);
+	else value.textContent = amount;
+	card.append(title, value);
+	return card;
+}
+
+function renderRetrospective() {
+	const month = document.querySelector('#retrospective-month').value;
+	const retro = buildRetrospective(getPlanningContext(), month);
+	const content = document.querySelector('#retrospective-content');
+	document.querySelector('#retrospective-title').textContent = `Seu ${month === getCurrentMonth() ? 'mês até agora' : 'mês'}: ${formatMonthLabel(month).toLowerCase()}`;
+	if (!retro.count && !retro.invested) {
+		content.replaceChildren(createEmptyState('Sem lançamentos neste mês.'));
+		return;
+	}
+	const headline = document.createElement('p');
+	headline.className = `retro-headline ${retro.saved >= 0 ? 'is-positive' : 'is-negative'}`;
+	headline.textContent = retro.saved >= 0
+		? `Você fechou no azul e guardou ${Math.round(retro.savingsRate)}% da sua renda. ${retro.savingsRate >= 20 ? 'Excelente!' : 'Dá para chegar aos 20%!'}`
+		: `Você gastou ${currencyFormatter.format(-retro.saved)} a mais do que ganhou. Vamos ajustar no próximo mês?`;
+	const cards = document.createElement('div');
+	cards.className = 'retro-cards';
+	cards.append(
+		createRetroCard('Receitas', retro.income, 'is-positive'),
+		createRetroCard('Despesas', retro.spent, 'is-negative'),
+		createRetroCard(retro.saved >= 0 ? 'Sobrou' : 'Faltou', Math.abs(retro.saved), retro.saved >= 0 ? 'is-positive' : 'is-negative'),
+		createRetroCard('Investido', retro.invested)
+	);
+	const highlights = document.createElement('ul');
+	highlights.className = 'insight-list';
+	const addHighlight = (text) => {
+		const item = document.createElement('li');
+		item.textContent = text;
+		highlights.append(item);
+	};
+	if (retro.spentChange !== null) {
+		addHighlight(retro.spentChange <= 0
+			? `Você gastou ${Math.abs(Math.round(retro.spentChange))}% a menos que no mês anterior.`
+			: `Você gastou ${Math.round(retro.spentChange)}% a mais que no mês anterior.`);
+	}
+	if (retro.biggestExpense) addHighlight(`Maior despesa: ${retro.biggestExpense.description} (${currencyFormatter.format(retro.biggestExpense.amount)}).`);
+	if (retro.biggestIncrease) addHighlight(`Onde mais aumentou: ${retro.biggestIncrease.name} (+${currencyFormatter.format(retro.biggestIncrease.difference)}).`);
+	if (retro.biggestDecrease) addHighlight(`Onde mais economizou: ${retro.biggestDecrease.name} (${currencyFormatter.format(retro.biggestDecrease.difference)}).`);
+	addHighlight(`${retro.noSpendDays} dia(s) sem nenhum gasto e ${retro.count} lançamento(s) registrados.`);
+	if (retro.goalSavings) addHighlight(`Você guardou ${currencyFormatter.format(retro.goalSavings)} nas suas metas.`);
+	if (retro.pendingCount) addHighlight(`${retro.pendingCount} conta(s) deste mês ainda estão pendentes.`);
+	const categoriesTitle = document.createElement('p');
+	categoriesTitle.className = 'section-kicker';
+	categoriesTitle.textContent = 'Para onde foi o dinheiro';
+	const categories = document.createElement('ul');
+	categories.className = 'category-legend';
+	retro.categories.slice(0, 5).forEach((category) => {
+		const item = document.createElement('li');
+		const dot = document.createElement('i');
+		const label = document.createElement('span');
+		const amount = document.createElement('strong');
+		const change = document.createElement('small');
+		dot.style.background = getCategory(category.name).color;
+		label.textContent = category.name;
+		amount.textContent = currencyFormatter.format(category.value);
+		const difference = category.previous ? Math.round(((category.value - category.previous) / category.previous) * 100) : null;
+		change.textContent = difference === null ? 'novo' : `${difference > 0 ? '+' : ''}${difference}%`;
+		change.className = difference !== null && difference > 0 ? 'is-negative' : 'is-positive';
+		item.append(dot, label, amount, change);
+		categories.append(item);
+	});
+	content.replaceChildren(headline, cards, highlights, categoriesTitle, categories);
+}
+
+document.querySelector('#open-retrospective-button').addEventListener('click', openRetrospective);
+document.querySelector('#retrospective-month').addEventListener('change', renderRetrospective);
+
+/* ---------- Offline indicator ---------- */
+
+function updateOnlineStatus() {
+	document.querySelector('#offline-banner').hidden = navigator.onLine;
+}
+
+window.addEventListener('online', updateOnlineStatus);
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
 
 refreshCategorySelects();
 renderSimulator();

@@ -17,11 +17,26 @@
 <body>
 	<section class="auth-screen" id="auth-screen" aria-labelledby="auth-title">
 		<div class="auth-intro">
-			<a class="brand" href="#" aria-label="NAVERDATHI">
-				<span class="brand-mark brand-logo"><img src="Logo%20site%20Naverdathi.png.jpeg" alt="Logo NAVERDATHI"></span>
-				<span>NAVERDATHI</span>
-			</a>
-			<div class="auth-message"><p class="eyebrow">CONTROLE FINANCEIRO PESSOAL</p><h1>Seu dinheiro, em bom fluxo.</h1><p>Organize receitas, despesas e planos em um s&oacute; lugar.</p></div>
+			<div class="auth-hero">
+				<span class="auth-logo"><img src="Logo%20site%20Naverdathi.png.jpeg" alt="Logo NAVERDATHI"></span>
+				<div>
+					<p class="auth-brand-name" aria-label="NAVERDATHI">NAVER<span>DATHI</span></p>
+					<p class="eyebrow">CONTROLE FINANCEIRO PESSOAL</p>
+				</div>
+			</div>
+			<figure class="meme-quote">
+				<span class="meme-play" aria-hidden="true">▶</span>
+				<blockquote>“Fala galera, Neymar Júnior aqui, <strong>NAVERDATHI</strong>! Hoje eu vim prestigiar o controle financeiro mais brabo do Brasil. Organiza esse dinheiro aí, parça!”</blockquote>
+				<figcaption>— Neymar Júnior <small>(versão meme)</small></figcaption>
+			</figure>
+			<div class="auth-message">
+				<h1>Seu dinheiro, em bom fluxo.</h1>
+				<ul class="auth-features">
+					<li><span aria-hidden="true">▭</span>Cartões, faturas e limite sempre atualizados</li>
+					<li><span aria-hidden="true">⇢</span>Previsão de saldo para os próximos meses</li>
+					<li><span aria-hidden="true">!</span>Alertas de contas antes de vencer</li>
+				</ul>
+			</div>
 			<div class="auth-pattern" aria-hidden="true"></div>
 		</div>
 		<div class="auth-form-area">
@@ -31,13 +46,21 @@
 				<p class="auth-subtitle" id="auth-subtitle">Acompanhe sua vida financeira.</p>
 				<label id="name-field" hidden>Nome<input id="auth-name" type="text" autocomplete="name" placeholder="Como podemos chamar voc&ecirc;?"></label>
 				<label>E-mail<input id="auth-email" type="email" autocomplete="email" required placeholder="voce@exemplo.com"></label>
-				<label>Senha<input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="M&iacute;nimo de 6 caracteres"></label>
-				<button class="forgot-password-button" id="forgot-password-button" type="button">Esqueci minha senha</button>
+				<label>Senha
+					<span class="password-field"><input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="M&iacute;nimo de 6 caracteres"><button class="password-toggle" id="password-toggle" type="button" aria-label="Mostrar senha" aria-pressed="false">Mostrar</button></span>
+				</label>
+				<p class="caps-warning" id="caps-warning" hidden>⇪ Caps Lock está ativado</p>
+				<div class="password-strength" id="password-strength" hidden><i><b id="password-strength-bar"></b></i><small id="password-strength-label"></small></div>
+				<div class="auth-options">
+					<label class="remember-field"><input id="remember-email" type="checkbox">Lembrar meu e-mail</label>
+					<button class="forgot-password-button" id="forgot-password-button" type="button">Esqueci minha senha</button>
+				</div>
 				<p class="auth-error" id="auth-error" role="alert"></p>
 				<button class="submit-button" id="auth-submit" type="submit">Entrar</button>
 				<div class="auth-divider"><span>ou</span></div>
 				<button class="google-button" id="google-login-button" type="button"><span aria-hidden="true">G</span>Continuar com Google</button>
 				<p class="auth-switch" id="auth-switch">Ainda n&atilde;o possui uma conta? <button type="button" id="auth-mode-toggle">Criar conta</button></p>
+				<p class="auth-security">🔒 Seus dados ficam protegidos com o Google Firebase.</p>
 			</form>
 		</div>
 	</section>
@@ -69,14 +92,23 @@
 				<a class="nav-item" href="#contas-a-pagar" data-view="Contas a pagar">
 					<span class="nav-icon">!</span>Contas a pagar
 				</a>
+				<a class="nav-item" href="#calendario" data-view="Calendário">
+					<span class="nav-icon">▦</span>Calendário
+				</a>
 				<a class="nav-item" href="#contas" data-view="Contas e cartões">
 					<span class="nav-icon">▭</span>Contas e cartões
 				</a>
 				<a class="nav-item" href="#orcamento" data-view="Orçamento">
 					<span class="nav-icon">◔</span>Orçamento
 				</a>
+				<a class="nav-item" href="#planejamento" data-view="Planejamento">
+					<span class="nav-icon">⇢</span>Planejamento
+				</a>
 				<a class="nav-item" href="#relatorios" data-view="Relatórios">
 					<span class="nav-icon">▤</span>Relatórios
+				</a>
+				<a class="nav-item" href="#assinaturas" data-view="Assinaturas e divisões">
+					<span class="nav-icon">↻</span>Assinaturas e divisões
 				</a>
 				<a class="nav-item" href="#investimentos" data-view="Investimentos">
 					<span class="nav-icon">↗</span>Investimentos
@@ -107,7 +139,7 @@
 					<div class="notification-wrap">
 						<button class="icon-button notification" id="notification-button" type="button" aria-label="Notificações" title="Notificações">♧<span id="notification-badge" hidden></span></button>
 						<section class="notification-panel" id="notification-panel" hidden aria-label="Notificações">
-							<div><strong>Notificações</strong><button class="clear-notifications" id="clear-notifications-button" type="button">Limpar</button></div>
+							<div><strong>Notificações</strong><span class="notification-panel-actions"><button class="clear-notifications" id="alert-settings-button" type="button">Configurar alertas</button><button class="clear-notifications" id="clear-notifications-button" type="button">Limpar</button></span></div>
 							<div class="notification-list" id="notification-list"></div>
 						</section>
 					</div>
@@ -115,18 +147,28 @@
 				</div>
 			</header>
 
+			<p class="offline-banner" id="offline-banner" role="status" hidden>Você está offline. Pode continuar registrando: as alterações serão sincronizadas quando a internet voltar.</p>
+
 			<section class="dashboard" id="inicio">
+				<form class="quick-entry" id="quick-entry-form" autocomplete="off">
+					<label for="quick-entry-input"><span aria-hidden="true">⚡</span>Lançamento rápido</label>
+					<input id="quick-entry-input" type="text" maxlength="120" placeholder='Ex.: "mercado 50", "uber 23,90 ontem", "+ salário 3000", "tv 1200 10x"'>
+					<button class="add-button" type="submit">Adicionar</button>
+					<small id="quick-entry-preview">Digite a descrição e o valor e pressione Enter. A categoria é sugerida automaticamente.</small>
+				</form>
 				<section class="summary-grid" aria-label="Resumo financeiro">
 					<article class="summary-card balance-card">
 						<div class="card-heading"><span>Saldo disponível</span><button class="visibility-button" type="button" aria-label="Ocultar valores" title="Ocultar valores">◉</button></div>
 						<strong class="amount" data-money="0" id="balance-amount">R$ 0,00</strong>
-						<p class="positive-change"><span id="balance-description">Adicione sua renda mensal</span></p>
+						<p class="positive-change"><span id="balance-description">Dinheiro que você tem hoje</span></p>
+						<p class="balance-hint" id="salary-hint" hidden></p>
+						<div class="balance-actions"><button type="button" id="register-salary-button" hidden>+ Lançar salário</button><button type="button" id="adjust-balance-button" title="Informe quanto você tem de verdade para corrigir o saldo">Ajustar saldo</button></div>
 						<div class="card-decoration" aria-hidden="true"></div>
 					</article>
 					<article class="summary-card">
 						<div class="card-heading"><span>Receitas no mês</span><span class="card-icon income">↓</span></div>
 						<strong class="amount" data-money="0" id="income-amount">R$ 0,00</strong>
-						<p class="positive-change"><span>receitas registradas</span></p>
+						<p class="positive-change"><span id="income-description">receitas registradas</span></p>
 					</article>
 					<article class="summary-card">
 						<div class="card-heading"><span>Despesas no mês</span><span class="card-icon expense">↑</span></div>
@@ -177,13 +219,39 @@
 
 				<section class="content-grid even">
 					<article class="panel">
-						<div class="panel-header"><div><p class="section-kicker">Últimos 6 meses</p><h2>Histórico mensal</h2></div></div>
+						<div class="panel-header"><div><p class="section-kicker">Últimos 6 meses</p><h2>Histórico mensal</h2></div><button class="text-button" id="open-retrospective-button" type="button">Retrospectiva do mês <span>★</span></button></div>
 						<div class="chart-legend"><span><i class="legend-dot income-dot"></i>Receitas</span><span><i class="legend-dot expense-dot"></i>Despesas e aportes</span></div>
 						<div class="bar-chart history-chart" id="history-chart" aria-label="Receitas e despesas dos últimos 6 meses"></div>
 					</article>
 					<article class="panel">
 						<div class="panel-header"><div><p class="section-kicker">Análise automática</p><h2>Insights</h2></div></div>
 						<ul class="insight-list" id="insight-list"></ul>
+					</article>
+				</section>
+
+				<section class="content-grid even" id="planejamento">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Próximos 6 meses</p><h2>Previsão de saldo</h2></div></div>
+						<p class="panel-description" id="forecast-summary">Considera sua renda, lançamentos fixos, parcelas, contas agendadas, aportes mensais e a média dos seus gastos do dia a dia.</p>
+						<div class="forecast-list" id="forecast-list"></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Renda já comprometida</p><h2>Compromissos futuros</h2></div><strong class="select-button" id="installments-remaining" data-money="0">R$ 0,00</strong></div>
+						<p class="panel-description">Quanto da sua renda dos próximos meses já está reservado para parcelas, contas fixas e contas agendadas.</p>
+						<div class="commitment-list" id="commitment-list"></div>
+						<div class="installment-groups" id="installment-groups"></div>
+					</article>
+				</section>
+
+				<section class="content-grid even">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker" id="rule-period">Este mês</p><h2>Regra 50/30/20</h2></div><button class="text-button" id="rule-categories-button" type="button">Classificar categorias <span>⚙</span></button></div>
+						<p class="panel-description">Uma referência: 50% da renda para necessidades, 30% para desejos e 20% para poupança e investimentos.</p>
+						<div class="rule-list" id="rule-list"></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Sequências e conquistas</p><h2>Suas conquistas</h2></div><strong class="select-button" id="streak-badge">0 meses no azul</strong></div>
+						<div class="achievement-grid" id="achievement-grid"></div>
 					</article>
 				</section>
 
@@ -195,6 +263,29 @@
 					<article class="panel">
 						<div class="panel-header"><div><p class="section-kicker">Todo mês</p><h2>Lançamentos fixos</h2></div></div>
 						<div class="recurring-list" id="recurring-list"></div>
+					</article>
+				</section>
+
+				<section class="panel calendar-panel" id="calendario">
+					<div class="panel-header">
+						<div><p class="section-kicker">Calendário financeiro</p><h2 id="calendar-title">Mês</h2></div>
+						<div class="calendar-nav"><button class="icon-button" id="calendar-prev" type="button" aria-label="Mês anterior">‹</button><button class="text-button" id="calendar-today" type="button">Hoje</button><button class="icon-button" id="calendar-next" type="button" aria-label="Próximo mês">›</button></div>
+					</div>
+					<div class="chart-legend"><span><i class="legend-dot income-dot"></i>Entradas</span><span><i class="legend-dot expense-dot"></i>Saídas</span><span><i class="legend-dot pending-dot"></i>A pagar</span><span><i class="legend-dot invoice-dot"></i>Fatura do cartão</span><span><i class="legend-dot projected-dot"></i>Previsto</span></div>
+					<div class="calendar-grid" id="calendar-grid" role="grid" aria-labelledby="calendar-title"></div>
+					<div class="calendar-details" id="calendar-details" aria-live="polite"></div>
+				</section>
+
+				<section class="content-grid even" id="assinaturas">
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Serviços recorrentes</p><h2>Assinaturas</h2></div><button class="text-button" id="add-subscription-button" type="button">Nova assinatura <span>+</span></button></div>
+						<div class="subscription-summary"><div><span>Por mês</span><strong id="subscriptions-monthly" data-money="0">R$ 0,00</strong></div><div><span>Por ano</span><strong id="subscriptions-yearly" data-money="0">R$ 0,00</strong></div><div><span>Da renda</span><strong id="subscriptions-share">0%</strong></div></div>
+						<div class="recurring-list" id="subscription-list"></div>
+					</article>
+					<article class="panel">
+						<div class="panel-header"><div><p class="section-kicker">Quem deve para quem</p><h2>Divisão de gastos</h2></div><button class="text-button" id="add-debt-button" type="button">Novo registro <span>+</span></button></div>
+						<div class="subscription-summary two"><div><span>Te devem</span><strong class="is-positive" id="debts-receivable" data-money="0">R$ 0,00</strong></div><div><span>Você deve</span><strong class="is-negative" id="debts-payable" data-money="0">R$ 0,00</strong></div></div>
+						<div class="debt-list" id="debt-list"></div>
 					</article>
 				</section>
 
@@ -258,8 +349,8 @@
 				<label><span id="transaction-amount-label">Valor</span><input required id="transaction-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
 				<label>Data<input required id="transaction-date" type="date"></label>
 			</div>
-			<label data-field="category">Categoria<select id="transaction-category"></select></label>
-			<label data-field="account">Conta ou cartão<select id="transaction-account"><option value="">Sem conta</option></select></label>
+			<label data-field="category">Categoria<select id="transaction-category"></select><small class="field-hint" id="category-suggestion-hint" hidden></small></label>
+			<label data-field="account">Conta ou cartão<select id="transaction-account"><option value="">Sem conta</option></select><small class="field-hint" id="transaction-invoice-hint" hidden></small></label>
 			<div class="form-row" data-field="transfer" hidden>
 				<label>De<select id="transfer-from"></select></label>
 				<label>Para<select id="transfer-to"></select></label>
@@ -268,9 +359,20 @@
 				<label data-field="installments">Parcelas<input id="transaction-installments" type="number" min="1" max="60" step="1" value="1"></label>
 				<label class="check-field"><input id="transaction-recurring" type="checkbox">Repetir todo mês</label>
 			</div>
+			<label class="check-field" data-field="next-month"><input id="transaction-next-month" type="checkbox">Primeira cobrança só no mês que vem</label>
+			<label class="check-field" data-field="subscription" hidden><input id="transaction-subscription" type="checkbox">É uma assinatura (streaming, app, academia…)</label>
 			<label class="check-field" data-field="paid"><input id="transaction-paid" type="checkbox" checked>Já foi pago / recebido</label>
+			<div class="split-fields" data-field="split">
+				<label class="check-field"><input id="transaction-split" type="checkbox">Dividir com outras pessoas</label>
+				<label data-field="split-people" hidden>Com quem? <span class="optional-label">separe os nomes por vírgula</span><input id="transaction-split-people" type="text" maxlength="160" placeholder="Ex.: Ana, Pedro"></label>
+				<small class="field-hint" id="transaction-split-hint" hidden></small>
+			</div>
 			<label>Tags <span class="optional-label">separe por vírgula</span><input id="transaction-tags" type="text" maxlength="120" placeholder="Ex.: viagem, presente"></label>
 			<label>Observação <span class="optional-label">opcional</span><textarea id="transaction-notes" rows="2" maxlength="300"></textarea></label>
+			<div class="receipt-field">
+				<label>Comprovante <span class="optional-label">foto ou PDF</span><input id="transaction-receipt" type="file" accept="image/*,application/pdf"></label>
+				<div class="receipt-current" id="transaction-receipt-current" hidden><span id="transaction-receipt-name"></span><button class="text-button" id="transaction-receipt-view" type="button">Ver</button><button class="text-button danger-text" id="transaction-receipt-remove" type="button">Remover</button></div>
+			</div>
 			<p class="auth-error" id="transaction-error" role="alert"></p>
 			<button class="submit-button" id="transaction-submit-button" type="submit">Adicionar lançamento</button>
 		</form>
@@ -278,8 +380,10 @@
 	<dialog class="transaction-modal salary-modal" id="salary-modal">
 		<form id="salary-form">
 			<div class="modal-header"><div><p class="section-kicker">PRIMEIRO PASSO</p><h2>Qual &eacute; sua renda mensal?</h2></div></div>
-			<p class="modal-description">Usaremos esse valor como sua receita mensal inicial. Voc&ecirc; poder&aacute; alter&aacute;-lo depois.</p>
+			<p class="modal-description">Ela serve de refer&ecirc;ncia para o seu planejamento (or&ccedil;amento, regra 50/30/20 e previs&otilde;es). Ela s&oacute; entra no saldo quando o dinheiro cai, ou seja, quando &eacute; lan&ccedil;ada como receita.</p>
 			<label>Sal&aacute;rio ou renda mensal<input required id="salary-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00"></label>
+			<label class="check-field"><input id="salary-recurring" type="checkbox" checked>Lan&ccedil;ar automaticamente como receita todo m&ecirc;s</label>
+			<label data-salary-day>Dia em que voc&ecirc; recebe<input id="salary-day" type="number" min="1" max="31" step="1" value="5"></label>
 			<p class="auth-error" id="salary-error" role="alert"></p>
 			<button class="submit-button" type="submit">Come&ccedil;ar a organizar</button>
 		</form>
@@ -291,7 +395,7 @@
 			<label>Nome<input required id="profile-name-input" type="text" autocomplete="name"></label>
 			<label>E-mail<input id="profile-email-input" type="email" autocomplete="email" readonly></label>
 			<button class="email-change-button" id="open-email-change-button" type="button">Alterar e-mail</button>
-			<label>Renda mensal<input required id="profile-income-input" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00"></label>
+			<label>Renda mensal <span class="optional-label">refer&ecirc;ncia para o planejamento, n&atilde;o entra no saldo</span><input required id="profile-income-input" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0,00"></label>
 			<p class="profile-hint">A imagem &eacute; compactada antes de ser salva.</p>
 			<div class="profile-actions"><button class="remove-income-button" id="remove-income-button" type="button">Remover renda</button><button class="submit-button" type="submit">Salvar perfil</button></div>
 		</form>
@@ -391,6 +495,92 @@
 			<button class="submit-button" id="import-submit" type="submit">Importar lançamentos</button>
 		</form>
 	</dialog>
+	<dialog class="transaction-modal wide-modal" id="invoice-modal">
+		<div class="modal-body">
+			<div class="modal-header"><div><p class="section-kicker">FATURA DO CARTÃO</p><h2 id="invoice-card-name">Cartão</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<div class="invoice-nav"><button class="icon-button" id="invoice-prev" type="button" aria-label="Fatura anterior">‹</button><strong id="invoice-month-label">Mês</strong><button class="icon-button" id="invoice-next" type="button" aria-label="Próxima fatura">›</button></div>
+			<div class="invoice-summary">
+				<div><span>Total da fatura</span><strong id="invoice-total" data-money="0">R$ 0,00</strong><em class="invoice-status" id="invoice-status">Aberta</em></div>
+				<div><span>Fechamento</span><strong id="invoice-closing">—</strong></div>
+				<div><span>Vencimento</span><strong id="invoice-due">—</strong></div>
+				<div><span>Pago</span><strong id="invoice-paid" data-money="0">R$ 0,00</strong></div>
+			</div>
+			<div class="invoice-items" id="invoice-items"></div>
+			<form class="invoice-pay-form" id="invoice-pay-form">
+				<p class="section-kicker">Pagar fatura</p>
+				<div class="form-row three-even">
+					<label>Pagar com<select id="invoice-pay-account"></select></label>
+					<label>Valor<input required id="invoice-pay-amount" type="number" min="0.01" step="0.01"></label>
+					<label>Data<input required id="invoice-pay-date" type="date"></label>
+				</div>
+				<p class="auth-error" id="invoice-pay-error" role="alert"></p>
+				<button class="submit-button" id="invoice-pay-submit" type="submit">Pagar fatura</button>
+			</form>
+		</div>
+	</dialog>
+	<dialog class="transaction-modal" id="alert-settings-modal">
+		<form id="alert-settings-form">
+			<div class="modal-header"><div><p class="section-kicker">PREFERÊNCIAS</p><h2>Configurar alertas</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<p class="modal-description">Escolha quais avisos deseja receber e com quanta antecedência.</p>
+			<div class="alert-setting"><label class="check-field"><input id="alert-bills" type="checkbox">Contas a vencer e atrasadas</label><label class="inline-number">dias antes<input id="alert-bill-days" type="number" min="0" max="15" step="1"></label></div>
+			<div class="alert-setting"><label class="check-field"><input id="alert-invoice" type="checkbox">Fatura do cartão fechando e vencendo</label><label class="inline-number">dias antes<input id="alert-invoice-days" type="number" min="0" max="15" step="1"></label></div>
+			<div class="alert-setting"><label class="check-field"><input id="alert-card-limit" type="checkbox">Limite do cartão quase no fim</label><label class="inline-number">% usado<input id="alert-card-limit-percent" type="number" min="10" max="100" step="5"></label></div>
+			<label class="check-field"><input id="alert-budget" type="checkbox">Limites de categoria (80% e 100%)</label>
+			<label class="check-field"><input id="alert-forecast" type="checkbox">Saldo previsto negativo no fim do mês</label>
+			<label class="check-field"><input id="alert-unusual" type="checkbox">Gasto fora do comum (o dobro da média da categoria)</label>
+			<label class="check-field"><input id="alert-goals" type="checkbox">Metas atrasadas em relação ao plano</label>
+			<label class="check-field"><input id="alert-achievements" type="checkbox">Conquistas e retrospectiva do mês</label>
+			<div class="push-box">
+				<label class="check-field"><input id="alert-push" type="checkbox">Notificações no celular/computador</label>
+				<small id="alert-push-status">Os avisos também aparecem fora do site. Com o app instalado (Chrome/Edge/Android), contas e faturas são verificadas mesmo com o site fechado.</small>
+			</div>
+			<p class="auth-error" id="alert-settings-error" role="alert"></p>
+			<button class="submit-button" type="submit">Salvar preferências</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal" id="debt-modal">
+		<form id="debt-form">
+			<div class="modal-header"><div><p class="section-kicker">DIVISÃO DE GASTOS</p><h2>Novo registro</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<div class="type-switch" role="group" aria-label="Quem deve"><button class="type-option debt-direction active" type="button" data-direction="receivable">Me devem</button><button class="type-option debt-direction" type="button" data-direction="payable">Eu devo</button></div>
+			<label>Pessoa<input required id="debt-person" type="text" maxlength="40" placeholder="Ex.: Ana"></label>
+			<label>Descrição<input required id="debt-description" type="text" maxlength="80" placeholder="Ex.: Pizza de sexta"></label>
+			<label>Valor<input required id="debt-amount" type="number" min="0.01" step="0.01" placeholder="0,00"></label>
+			<button class="submit-button" type="submit">Salvar</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal wide-modal" id="retrospective-modal">
+		<div class="modal-body">
+			<div class="modal-header"><div><p class="section-kicker">RETROSPECTIVA</p><h2 id="retrospective-title">Seu mês</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<label class="month-filter">Mês<select id="retrospective-month"></select></label>
+			<div id="retrospective-content"></div>
+		</div>
+	</dialog>
+	<dialog class="transaction-modal" id="category-groups-modal">
+		<form id="category-groups-form">
+			<div class="modal-header"><div><p class="section-kicker">REGRA 50/30/20</p><h2>Classificar categorias</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<p class="modal-description">Diga se cada categoria é uma necessidade, um desejo ou poupança. Aportes em investimentos contam sempre como poupança.</p>
+			<div class="budget-fields" id="category-groups-fields"></div>
+			<button class="submit-button" type="submit">Salvar classificação</button>
+		</form>
+	</dialog>
+	<dialog class="transaction-modal wide-modal" id="receipt-modal">
+		<div class="modal-body">
+			<div class="modal-header"><div><p class="section-kicker">COMPROVANTE</p><h2 id="receipt-title">Comprovante</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<div class="receipt-viewer" id="receipt-viewer"></div>
+			<a class="text-button" id="receipt-download" href="#" download>Baixar arquivo</a>
+		</div>
+	</dialog>
+	<dialog class="transaction-modal" id="adjust-balance-modal">
+		<form id="adjust-balance-form">
+			<div class="modal-header"><div><p class="section-kicker">CORRIGIR SALDO</p><h2>Ajustar saldo disponível</h2></div><button class="close-button" type="button" data-close-dialog aria-label="Fechar">×</button></div>
+			<p class="modal-description" id="adjust-balance-description">Some o que você tem hoje em contas e na carteira. Vamos criar um lançamento de ajuste com a diferença, sem afetar seus relatórios de gastos.</p>
+			<label>Quanto você tem hoje, de verdade?<input required id="adjust-balance-amount" type="number" step="0.01" placeholder="0,00"></label>
+			<label>Em qual conta? <span class="optional-label">opcional</span><select id="adjust-balance-account"></select></label>
+			<p class="field-hint" id="adjust-balance-preview"></p>
+			<button class="submit-button" type="submit">Ajustar saldo</button>
+		</form>
+	</dialog>
+	<div class="toast" id="toast" role="status" aria-live="polite" hidden><span id="toast-message"></span><button type="button" id="toast-action">Desfazer</button></div>
 	<script type="module" src="script.js"></script>
 </body>
 </html>
